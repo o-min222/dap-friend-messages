@@ -21,11 +21,6 @@
       </section>
 
       <div id="workspace" class="workspace" hidden>
-        <nav class="tabs" aria-label="쪽지 메뉴">
-          <button id="tab-home" class="tab active" type="button" aria-controls="view-home">쪽지 <span id="nav-unread" class="badge">0</span></button>
-          <button id="tab-manage" class="tab" type="button" aria-controls="view-manage">관리 <span id="invite-count" class="badge">0</span></button>
-        </nav>
-
         <section id="view-home" class="view" aria-labelledby="home-title">
           <div class="view-heading inbox-heading"><h2 id="home-title" tabindex="-1">쪽지</h2></div>
           <ul id="message-list" class="message-list" aria-live="polite" aria-relevant="additions removals" aria-atomic="false"></ul>
@@ -33,24 +28,32 @@
         </section>
 
         <section id="view-manage" class="view" hidden aria-labelledby="manage-title">
-          <div class="view-heading manage-view-heading"><h2 id="manage-title" tabindex="-1">관리</h2><button id="manage-menu-trigger" class="management-icon-action" type="button" aria-label="관리 메뉴" title="관리 메뉴" aria-haspopup="dialog">⋮</button></div>
-          <section class="management-section" aria-labelledby="friends-title">
-            <div class="management-heading"><h3 id="friends-title" tabindex="-1">친구</h3></div>
+          <div class="view-heading manage-view-heading"><h2 id="manage-title" tabindex="-1">친구</h2><button id="manage-menu-trigger" class="management-icon-action" type="button" aria-label="관리 메뉴" title="관리 메뉴" aria-haspopup="dialog">⋮</button></div>
+          <button id="profile-row" class="profile-row manage-row" type="button" aria-haspopup="dialog"><span class="manage-avatar" aria-hidden="true">나</span><span class="manage-info"><strong id="profile-current-name">설정 전</strong><small>내 프로필 · 눌러서 수정 <span class="profile-code">내 코드 <span id="my-code">------</span></span></small></span><span class="chevron" aria-hidden="true">›</span></button>
+          <div class="manage-segments" role="tablist" aria-label="친구와 모임">
+            <button id="manage-tab-friends" type="button" role="tab" aria-selected="true" aria-controls="friends-panel">친구</button>
+            <button id="manage-tab-groups" type="button" role="tab" aria-selected="false" aria-controls="groups-panel" tabindex="-1">모임 <span id="group-invite-count" class="badge">0</span></button>
+          </div>
+          <section id="friends-panel" class="management-section" role="tabpanel" aria-labelledby="manage-tab-friends">
             <ul id="friend-list" class="manage-list"></ul><p id="friend-empty" class="empty compact">연결된 친구가 없어요.</p>
           </section>
 
-          <section class="management-section" aria-labelledby="groups-title">
-            <div class="management-heading"><h3 id="groups-title" tabindex="-1">모임</h3></div>
+          <section id="groups-panel" class="management-section" role="tabpanel" aria-labelledby="manage-tab-groups" hidden>
             <ul id="group-list" class="group-list"></ul><p id="group-empty" class="empty compact">참여 중인 모임이나 받은 초대가 없어요.</p>
           </section>
         </section>
+
+        <nav class="bottom-nav" aria-label="주요 메뉴">
+          <button id="tab-home" class="bottom-nav-item active" type="button" aria-controls="view-home" aria-current="page"><span class="bottom-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M4 6.5h16v11H4zM4 7l8 6 8-6"/></svg></span><span class="bottom-nav-label">쪽지</span><span id="nav-unread" class="badge">0</span></button>
+          <button id="tab-manage" class="bottom-nav-item" type="button" aria-controls="view-manage" aria-current="false"><span class="bottom-nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="8" r="3"/><path d="M6 19c.6-3.5 2.6-5 6-5s5.4 1.5 6 5"/></svg></span><span class="bottom-nav-label">친구</span><span id="invite-count" class="badge">0</span></button>
+        </nav>
       </div>
 
       <div id="manage-dialog-backdrop" class="dialog-backdrop" hidden>
         <section id="manage-dialog" class="manage-dialog" role="dialog" aria-modal="true" aria-labelledby="manage-dialog-title" tabindex="-1">
           <header class="dialog-header"><span class="dialog-back-slot"><button id="manage-dialog-back" class="icon-button" type="button" aria-label="관리 메뉴로 돌아가기" title="뒤로" hidden>‹</button></span><h2 id="manage-dialog-title" tabindex="-1">관리</h2><button id="manage-dialog-close" class="icon-button" type="button" aria-label="관리 창 닫기">×</button></header>
           <div class="dialog-content">
-            <section id="menu-panel" hidden><ul class="dialog-menu-list"><li><button id="menu-profile" class="manage-row" type="button"><span class="manage-avatar" aria-hidden="true">나</span><span class="manage-info"><strong id="profile-current-name">설정 전</strong><small>내 코드 <span id="my-code">------</span></small></span><span class="chevron" aria-hidden="true">›</span></button></li><li><button id="menu-friend-add" class="manage-row" type="button"><span class="manage-avatar" aria-hidden="true">＋</span><span class="manage-info"><strong>친구 추가</strong><small>친구 코드로 연결</small></span><span class="chevron" aria-hidden="true">›</span></button></li><li><button id="menu-group-add" class="manage-row" type="button"><span class="manage-avatar" aria-hidden="true">＋</span><span class="manage-info"><strong>새 모임 만들기</strong><small>친구와 최대 8명</small></span><span class="chevron" aria-hidden="true">›</span></button></li></ul></section>
+            <section id="menu-panel" hidden><ul class="dialog-menu-list"><li><button id="menu-friend-add" class="manage-row" type="button"><span class="manage-avatar" aria-hidden="true">＋</span><span class="manage-info"><strong>친구 추가</strong><small>친구 코드로 연결</small></span><span class="chevron" aria-hidden="true">›</span></button></li><li><button id="menu-group-add" class="manage-row" type="button"><span class="manage-avatar" aria-hidden="true">＋</span><span class="manage-info"><strong>새 모임 만들기</strong><small>친구와 최대 8명</small></span><span class="chevron" aria-hidden="true">›</span></button></li></ul></section>
             <section id="profile-panel" hidden><p class="dialog-copy">Google 이름은 공개하지 않으며 이 별명만 친구에게 보입니다.</p><form id="profile-form" class="dialog-form"><label>내 공개 별명<input id="profile-name" name="profile-name" autocomplete="off" placeholder="친구에게 보일 별명…" required></label><div class="form-actions"><button id="profile-save" class="primary-button" type="submit">저장</button><button id="profile-cancel" class="text-button" type="button">취소</button></div></form></section>
             <section id="friend-add-panel" hidden><form id="friend-form" class="dialog-form"><label>친구 코드<input id="friend-code" name="friend-code" maxlength="6" pattern="[A-Fa-f0-9]{6}" autocomplete="off" spellcheck="false" placeholder="예: A1B2C3…" required></label><label>내가 부를 이름 <span>(선택·내 화면 전용)</span><input id="friend-alias" name="friend-alias" autocomplete="off" placeholder="비우면 친구의 공개 별명 사용…"></label><div class="form-actions"><button id="friend-add-submit" class="primary-button" type="submit">추가</button><button id="friend-add-cancel" class="text-button" type="button">취소</button></div></form></section>
             <section id="friend-panel" hidden><div class="detail-card"><strong id="friend-detail-name">친구</strong><small id="friend-detail-status"></small></div><button id="friend-message" class="primary-button full-button" type="button">쪽지 보내기</button><form id="friend-alias-form" class="dialog-form"><label>내가 부를 이름<input id="friend-detail-alias" name="friend-detail-alias" autocomplete="off" placeholder="친구의 공개 별명 사용…"></label><div class="form-actions"><button id="friend-alias-save" class="primary-button" type="submit">별칭 저장</button><button id="friend-alias-reset" class="text-button" type="button">공개 별명 사용</button></div></form><div class="danger-zone"><button id="friend-block" class="text-button" type="button">차단</button><button id="friend-remove" class="text-button danger" type="button">친구 삭제</button></div></section>
