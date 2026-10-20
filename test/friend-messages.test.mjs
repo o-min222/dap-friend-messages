@@ -420,6 +420,64 @@ test("친구 등록·별칭 수정·공개 별명 변경 payload를 Edge 계약�
   }
 });
 
+test("모임 dialog 변경 작업은 operationId를 성공 state에 되돌려준다", async () => {
+  const postedActions = [];
+  const harness = pluginHarness({
+    connected: true,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body); postedActions.push(body.action);
+      if (body.action === "session") return { ok: true, status: 200, async text() { return JSON.stringify({ session_token: "opaque", expires_at: Date.now() + 60_000 }); } };
+      if (body.action === "state") return { ok: true, status: 200, async text() { return JSON.stringify({ profile: { user_id: "me", friend_code: "ABC123" }, friends: [{ friend_id: "f1", display_name: "하늘" }], groups: [{ group_id: "g1", group_name: "산책", is_owner: true, members: [] }], unopened_messages: [] }); } };
+      if (["createGroup", "updateGroup", "inviteGroup", "respondGroupInvite"].includes(body.action)) return { ok: true, status: 200, async text() { return "{}"; } };
+      throw new Error(`unexpected ${body.action}`);
+    },
+  });
+  try {
+    await wait(10); await harness.actions.find((action) => action.id === "openPalette").callback();
+    harness.handler({ type: "createGroup", name: "새 모임", memberIds: ["f1"], operationId: "op-group-create" });
+    harness.handler({ type: "updateGroup", groupId: "g1", name: "산책단", operationId: "op-group-rename" });
+    harness.handler({ type: "inviteGroup", groupId: "g1", memberIds: ["f1"], operationId: "op-group-invite" });
+    harness.handler({ type: "respondGroupInvite", inviteId: "i1", accept: true, operationId: "op-group-respond" });
+    await wait(30);
+    assert.deepEqual(postedActions.filter((action) => ["createGroup", "updateGroup", "inviteGroup", "respondGroupInvite"].includes(action)).sort(), ["createGroup", "inviteGroup", "respondGroupInvite", "updateGroup"]);
+    assert.deepEqual(
+      harness.posted.filter((message) => message.operationId?.startsWith("op-group-")).map((message) => message.operationId).sort(),
+      ["op-group-create", "op-group-invite", "op-group-rename", "op-group-respond"],
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("차단·삭제·나가기·내보내기 응답도 중복 방지 operationId를 되돌려준다", async () => {
+  const mutations = ["block", "remove", "removeGroupMember", "leaveGroup", "deleteGroup"];
+  const harness = pluginHarness({
+    connected: true,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      if (body.action === "session") return { ok: true, status: 200, async text() { return JSON.stringify({ session_token: "opaque", expires_at: Date.now() + 60_000 }); } };
+      if (body.action === "state") return { ok: true, status: 200, async text() { return JSON.stringify({ profile: { user_id: "me", friend_code: "ABC123" }, friends: [{ friend_id: "f1", display_name: "하늘" }], groups: [{ group_id: "g1", group_name: "산책", is_owner: true, members: [{ user_id: "f1", display_name: "하늘" }] }, { group_id: "g2", group_name: "독서", is_owner: false, members: [] }], unopened_messages: [] }); } };
+      if (mutations.includes(body.action)) return { ok: true, status: 200, async text() { return "{}"; } };
+      throw new Error(`unexpected ${body.action}`);
+    },
+  });
+  try {
+    await wait(10); await harness.actions.find((action) => action.id === "openPalette").callback();
+    harness.handler({ type: "blockFriend", friendId: "f1", operationId: "op-block" });
+    harness.handler({ type: "removeFriend", friendId: "f1", operationId: "op-remove" });
+    harness.handler({ type: "removeGroupMember", groupId: "g1", memberId: "f1", operationId: "op-kick" });
+    harness.handler({ type: "leaveGroup", groupId: "g2", operationId: "op-leave" });
+    harness.handler({ type: "deleteGroup", groupId: "g1", operationId: "op-delete" });
+    await wait(30);
+    assert.deepEqual(
+      harness.posted.filter((message) => /^op-(?:block|remove|kick|leave|delete)$/u.test(message.operationId || "")).map((message) => message.operationId).sort(),
+      ["op-block", "op-delete", "op-kick", "op-leave", "op-remove"],
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("모임 쪽지는 targetType/targetId/stickerId/anonymous adapter 계약으로 전송한다", async () => {
   const requests = [];
   const harness = pluginHarness({
