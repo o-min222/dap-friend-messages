@@ -3,94 +3,64 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#fff8ee" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#17131f" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#fffaf0">
     <title>친구 쪽지</title>
     <link rel="stylesheet" href="../ui/friend-messages.css">
   </head>
   <body>
     <main id="app" class="app" aria-busy="true">
       <header class="app-header">
-        <div>
-          <p class="eyebrow">DAP FRIENDS</p>
-          <h1>친구 쪽지</h1>
-        </div>
-        <div class="header-actions">
-          <button id="refresh" class="icon-button" type="button" aria-label="새 쪽지 확인" title="새로고침">↻</button>
-          <button id="close" class="icon-button" type="button" aria-label="닫기" title="닫기">×</button>
-        </div>
+        <div class="brand"><img src="../assets/friend-messages.svg" width="27" height="27" alt=""><div><p>DAP FRIENDS</p><h1>친구 쪽지</h1></div></div>
+        <div class="header-actions"><button id="refresh" class="icon-button" type="button" aria-label="새 쪽지 확인">↻</button><button id="close" class="icon-button" type="button" aria-label="닫기">×</button></div>
       </header>
 
-      <section id="connect-panel" class="setup card" aria-labelledby="connect-title">
-        <span class="setup-icon" aria-hidden="true">✦</span>
-        <h2 id="connect-title">친구들과 쪽지를 시작해요</h2>
-        <p>계정을 안전하게 구분하려면 Google 연결이 필요해요. 버튼을 누르기 전에는 동의 화면을 열지 않습니다.</p>
-        <button id="connect-google" class="button primary" type="button">Google로 연결</button>
+      <section id="connect-panel" class="setup" aria-labelledby="connect-title">
+        <span class="setup-icon" aria-hidden="true">✉️</span><h2 id="connect-title">작은 쪽지를 건네요</h2>
+        <p>Google 연결 후 친구와 모임에 종이 쪽지를 보낼 수 있어요. 버튼을 누르기 전에는 동의 화면을 열지 않습니다.</p>
+        <button id="connect-google" class="primary-button" type="button">Google로 연결</button>
       </section>
 
-      <div id="workspace" hidden>
-        <section class="identity card" aria-labelledby="my-code-title">
-          <div>
-            <p id="my-code-title" class="label">내 친구 코드</p>
-            <strong id="my-code" class="friend-code" aria-live="polite">------</strong>
-          </div>
-          <p>A–F와 숫자로 된 6자리 코드를 친구에게 알려주세요.</p>
+      <div id="workspace" class="workspace" hidden>
+        <nav class="tabs" aria-label="쪽지 메뉴">
+          <button id="tab-inbox" class="tab active" type="button">받은 쪽지 <span id="nav-unread" class="badge">0</span></button>
+          <button id="tab-compose" class="tab" type="button">쪽지 쓰기</button>
+          <button id="tab-friends" class="tab" type="button">친구</button>
+          <button id="tab-groups" class="tab" type="button">모임 <span id="invite-count" class="badge">0</span></button>
+        </nav>
+
+        <section id="view-inbox" class="view" aria-labelledby="inbox-title">
+          <div class="view-heading"><div><p class="eyebrow">PAPER NOTES</p><h2 id="inbox-title">도착한 쪽지</h2></div><span class="muted">열면 약 5초 뒤 사라져요</span></div>
+          <div id="message-stack" class="message-stack" aria-live="polite"></div>
+          <div id="inbox-empty" class="empty"><span aria-hidden="true">📭</span><strong>아직 온 쪽지가 없어요</strong><p>새 쪽지가 오면 접힌 봉투로 나타나요.</p></div>
         </section>
 
-        <section class="card" aria-labelledby="add-title">
-          <div class="section-heading">
-            <h2 id="add-title">친구 연결</h2>
-            <span>A–F·숫자 6자리</span>
-          </div>
-          <form id="friend-form" class="inline-form">
-            <label class="sr-only" for="friend-code">친구 코드</label>
-            <input id="friend-code" type="text" inputmode="text" autocomplete="off" maxlength="6" pattern="[A-Fa-f0-9]{6}" placeholder="예: A1B2C3" required>
-            <button class="button secondary" type="submit">연결</button>
+        <section id="view-compose" class="view" hidden aria-labelledby="compose-title">
+          <div class="view-heading"><div><p class="eyebrow">NEW NOTE</p><h2 id="compose-title">쪽지 쓰기</h2></div><span id="counter" class="muted">0 / 100</span></div>
+          <form id="message-form" class="paper-form">
+            <div class="target-row"><label>받는 곳<select id="target-type"><option value="friend">친구 1명</option><option value="group">모임 전체</option></select></label><label>대상<select id="target-select" required></select></label></div>
+            <fieldset class="stickers"><legend>내장 스티커 <span>(선택)</span></legend><div id="sticker-grid" class="sticker-grid"></div></fieldset>
+            <label class="paper"><span class="sr-only">쪽지 내용</span><textarea id="message-body" rows="4" placeholder="100자 안으로 마음을 적어 보세요"></textarea></label>
+            <button id="send" class="primary-button" type="submit">쪽지 접어 보내기</button>
+            <p class="form-hint">모임 쪽지는 모임원 모두에게 전달되며, 한 명이라도 친구·차단 조건을 충족하지 않으면 아무에게도 전송되지 않아요.</p>
           </form>
         </section>
 
-        <section class="card" aria-labelledby="compose-title">
-          <div class="section-heading">
-            <h2 id="compose-title">쪽지 보내기</h2>
-            <span id="counter">0 / 100</span>
-          </div>
-          <form id="message-form" class="message-form">
-            <label for="friend-select">받는 친구</label>
-            <select id="friend-select" required></select>
-            <label for="message-body">내용</label>
-            <textarea id="message-body" rows="3" maxlength="100" placeholder="짧은 안부를 남겨보세요" required></textarea>
-            <button id="send" class="button primary" type="submit">쪽지 보내기</button>
-          </form>
+        <section id="view-friends" class="view" hidden aria-labelledby="friends-title">
+          <div class="view-heading"><div><p class="eyebrow">FRIENDS</p><h2 id="friends-title">친구 관리</h2></div><div class="my-code">내 코드 <strong id="my-code">------</strong></div></div>
+          <form id="friend-form" class="inline-form"><label class="sr-only" for="friend-code">친구 코드</label><input id="friend-code" maxlength="6" pattern="[A-Fa-f0-9]{6}" placeholder="친구 코드 6자리" required><button type="submit">추가</button></form>
+          <ul id="friend-list" class="manage-list"></ul><p id="friend-empty" class="empty compact">연결된 친구가 없어요.</p>
         </section>
 
-        <section class="card inbox" aria-labelledby="inbox-title">
-          <div class="section-heading">
-            <h2 id="inbox-title">받은 쪽지</h2>
-            <span id="unread" class="badge">0</span>
-          </div>
-          <p id="inbox-empty" class="empty">아직 도착한 쪽지가 없어요.</p>
-          <ul id="message-list" class="message-list"></ul>
-          <p class="hint">목록에는 보낸 사람과 도착 시각만 보여요. 열면 내용이 표시되고 서버 만료 시각(약 5초)에 사라져요.</p>
+        <section id="view-groups" class="view" hidden aria-labelledby="groups-title">
+          <div class="view-heading"><div><p class="eyebrow">GROUPS · MAX 8</p><h2 id="groups-title">모임 관리</h2></div></div>
+          <div id="invite-section" class="subsection"><h3>받은 초대</h3><ul id="invite-list" class="manage-list"></ul></div>
+          <details class="create-group"><summary>새 모임 만들기</summary><form id="group-form"><label>모임 이름<input id="group-name" required></label><fieldset><legend>함께할 친구 · 최대 7명</legend><div id="group-friend-options" class="check-grid"></div></fieldset><button class="primary-button" type="submit">모임 만들기</button></form></details>
+          <ul id="group-list" class="group-list"></ul><p id="group-empty" class="empty compact">참여 중인 모임이 없어요.</p>
         </section>
-
-        <section class="card" aria-labelledby="friends-title">
-          <div class="section-heading">
-            <h2 id="friends-title">내 친구</h2>
-            <span id="friend-count">0명</span>
-          </div>
-          <ul id="friend-list" class="friend-list"></ul>
-          <p id="friend-empty" class="empty">친구 코드를 입력해 첫 친구를 연결해 보세요.</p>
-        </section>
-
-        <aside class="privacy" aria-label="보안 안내">
-          <strong>보안 안내</strong>
-          <p>전송 중에는 TLS, 서버 저장 시에는 저장 암호화를 사용합니다. 종단간 암호화(E2EE)는 아니며, 쪽지 본문은 텔레메트리에 기록하지 않습니다.</p>
-        </aside>
       </div>
 
-      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <footer><p id="status" class="status" role="status" aria-live="polite"></p><p class="privacy">TLS·저장 암호화 · E2EE 아님 · 본문 텔레메트리 미기록</p></footer>
     </main>
     <script src="../ui/friend-messages-ui.js"></script>
   </body>
 </html>
-

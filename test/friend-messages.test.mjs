@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { activate, __test } from "../dap_friend_messages/plugin.mjs";
 
 const wait = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
+test("polling interval은 한 곳에서만 만들고 재시작 전에 기존 timer를 정리한다", async () => {
+  const source = await readFile(new URL("../dap_friend_messages/plugin.mjs", import.meta.url), "utf8");
+  assert.equal(source.match(/\bsetInterval\s*\(/gu)?.length, 1);
+  assert.match(source, /const startPolling = \(\) => \{\s*stopPolling\(\);[\s\S]*pollTimer = setInterval/u);
+});
+
 test("최종 Edge endpoint와 공개 키, action allowlist를 고정한다", () => {
   assert.equal(__test.EDGE_URL, "https://vowrjkctldqxizvleogd.supabase.co/functions/v1/friend-messages");
   assert.equal(__test.PUBLISHABLE_KEY, "sb_publishable_Dgxv-IINi9MZLWRYnQAuug_MmvlpXsl");
-  assert.deepEqual([...__test.ALLOWED_ACTIONS], ["state", "connect", "send", "open", "remove", "block", "unblock"]);
+  assert.deepEqual([...__test.ALLOWED_ACTIONS], ["state", "connect", "open", "remove", "block", "unblock", "sendMessage", "createGroup", "updateGroup", "inviteGroup", "respondGroupInvite", "removeGroupMember", "leaveGroup", "deleteGroup"]);
+  assert.deepEqual([...__test.STICKER_IDS], ["smile", "cheer", "love", "surprise", "sulk", "cry", "celebrate", "tired"]);
   assert.deepEqual([...__test.OAUTH_SCOPES], ["openid", "email", "profile"]);
   assert.ok(__test.POLL_INTERVAL_MS >= 5_000 && __test.POLL_INTERVAL_MS <= 15_000);
 });
@@ -20,6 +28,8 @@ test("친구 코드는 A-F/숫자 6자리, 쪽지는 100자로 제한한다", ()
   assert.equal(__test.validateMessage(" 안녕! "), "안녕!");
   assert.throws(() => __test.validateMessage(""), /입력/u);
   assert.throws(() => __test.validateMessage("가".repeat(101)), /100자/u);
+  assert.deepEqual(__test.validateOutgoing("", "love"), { body: "", stickerId: "love" });
+  assert.throws(() => __test.validateOutgoing("", ""), /내용이나 스티커/u);
 });
 
 test("state의 열지 않은 쪽지는 메타데이터만 정규화하고 본문은 버린다", () => {
@@ -32,8 +42,27 @@ test("state의 열지 않은 쪽지는 메타데이터만 정규화하고 본문
   assert.equal(result.friends[0].id, "f1");
   assert.deepEqual(result.messages[0], {
     id: "m1", senderId: "f1", senderName: "하늘", createdAt: "2026-10-20T10:00:00Z",
+    targetType: "friend", targetId: "f1", targetName: "", stickerId: null,
     openedAt: null, expiresAt: null, body: null,
   });
+});
+
+test("모임과 pending 초대를 최대 8명 계약으로 정규화한다", () => {
+  const result = __test.normalizeState({
+    profile: { friend_code: "ABC123" },
+    groups: [{ group_id: "g1", group_name: "산책", is_owner: true, members: Array.from({ length: 10 }, (_, index) => ({ user_id: `u${index}`, display_name: `멤버${index}` })) }],
+    group_invites: [
+      { invite_id: "i1", group_id: "g2", group_name: "점심", invited_by_name: "하늘", direction: "incoming" },
+      { invite_id: "i2", group_id: "g3", group_name: "발신 초대", invited_by_name: "나", direction: "outgoing" },
+    ],
+  });
+  assert.equal(result.groups[0].owner, true);
+  assert.equal(result.groups[0].members.length, 8);
+  assert.equal(result.groupInvites.length, 1);
+  assert.equal(result.groupInvites[0].groupName, "점심");
+  assert.equal(result.groupInvites[0].inviterName, "하늘");
+  assert.equal(result.groupInvites[0].direction, "incoming");
+  assert.equal(__test.GROUP_MAX_MEMBERS, 8);
 });
 
 test("opaque 세션과 열린 쪽지의 서버 만료 시각을 검증한다", () => {
@@ -202,6 +231,35 @@ test("401이면 Google 토큰으로 opaque 세션을 한 번만 다시 교환한
     assert.equal(sessions, 2);
     assert.equal(states, 2);
     assert.equal(harness.oauthCalls.accessToken, 2);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("모임 쪽지는 targetType/targetId/stickerId adapter 계약으로 전송한다", async () => {
+  const requests = [];
+  const harness = pluginHarness({
+    connected: true,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      if (body.action === "session") return { ok: true, status: 200, async text() { return JSON.stringify({ session_token: "opaque", expires_at: Date.now() + 60_000 }); } };
+      if (body.action === "state") return { ok: true, status: 200, async text() { return JSON.stringify({ profile: { friend_code: "ABC123" }, groups: [{ group_id: "g1", group_name: "산책", is_owner: true, members: [] }], unopened_messages: [] }); } };
+      if (body.action === "sendMessage") return { ok: true, status: 200, async text() { return "{}"; } };
+      throw new Error(`unexpected ${body.action}`);
+    },
+  });
+  try {
+    await wait(10);
+    await harness.actions.find((action) => action.id === "openPalette").callback();
+    harness.handler({ type: "sendMessage", targetType: "group", targetId: "g1", body: "", stickerId: "celebrate" });
+    await wait(10);
+    const sent = requests.find((body) => body.action === "sendMessage");
+    assert.equal(sent.targetType, "group");
+    assert.equal(sent.targetId, "g1");
+    assert.equal(sent.body, "");
+    assert.equal(sent.stickerId, "celebrate");
+    assert.equal(typeof sent.clientNonce, "string");
   } finally {
     await harness.cleanup();
   }

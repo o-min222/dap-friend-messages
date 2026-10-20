@@ -21,7 +21,7 @@ for (const path of required) assert.ok((await stat(resolve(root, path))).isFile(
 const manifest = await readFile(resolve(root, "plugin.yaml"), "utf8");
 for (const line of [
   "id: dap.friend_messages",
-  "version: 0.1.1",
+  "version: 0.2.0",
   "entry: dap_friend_messages.plugin:activate",
   "min_app_version: 1.4.0",
   "  - window.palette",
@@ -35,17 +35,27 @@ assert.match(entry, /export function activate\(ctx\)/u);
 assert.match(entry, /ctx\.host\.oauth\.connect/u);
 assert.match(entry, /ctx\.host\.oauth\.accessToken/u);
 assert.match(entry, /ctx\.radialMenu\.addItem/u);
+assert.match(entry, /width:\s*410[\s\S]*height:\s*620/u, "palette는 compact 410px 폭이어야 합니다.");
+for (const action of ["createGroup", "updateGroup", "inviteGroup", "respondGroupInvite", "removeGroupMember", "leaveGroup", "deleteGroup", "sendMessage"]) assert.match(entry, new RegExp(`${action}:?\\s*["']${action}["']`, "u"));
+assert.match(entry, /invite\?\.direction === "incoming"/u, "받은 초대에는 incoming만 노출해야 합니다.");
 assert.match(entry, /https:\/\/vowrjkctldqxizvleogd\.supabase\.co\/functions\/v1\/friend-messages/u);
 assert.match(entry, /sb_publishable_Dgxv-IINi9MZLWRYnQAuug_MmvlpXsl/u);
 assert.doesNotMatch(entry, /ctx\.host\.storage|localStorage/u, "토큰이나 세션을 영구 저장하면 안 됩니다.");
 assert.doesNotMatch(entry, /service_role\s*[:=]\s*["'][^"']+/iu, "service_role secret을 포함하면 안 됩니다.");
+assert.equal(entry.match(/\bsetInterval\s*\(/gu)?.length, 1, "polling interval은 하나만 생성해야 합니다.");
 
 const html = await readFile(resolve(root, "palette/index.html"), "utf8");
 assert.doesNotMatch(html, /https?:\/\//u, "palette는 외부 리소스를 로드하면 안 됩니다.");
 assert.match(html, /\.\.\/ui\/friend-messages-ui\.js/u);
 assert.match(html, /aria-live/u);
-assert.match(html, /종단간 암호화\(E2EE\)는 아니/u);
-assert.match(html, /본문은 텔레메트리에 기록하지 않습니다/u);
+assert.match(html, /E2EE 아님/u);
+assert.match(html, /본문 텔레메트리 미기록/u);
+assert.match(html, /받은 쪽지/u);
+assert.match(html, /쪽지 쓰기/u);
+assert.match(html, /친구 관리/u);
+assert.match(html, /모임 관리/u);
+assert.doesNotMatch(html, /type="file"|업로드/u, "스티커 업로드 UI를 제공하면 안 됩니다.");
+assert.doesNotMatch(html, /<textarea[^>]*maxlength=|id="group-name"[^>]*maxlength=/u, "Unicode codepoint 검증 필드에 maxlength를 사용하면 안 됩니다.");
 
 const css = await readFile(resolve(root, "ui/friend-messages.css"), "utf8");
 assert.match(css, /\.app-header\s*\{[^}]*-webkit-app-region:\s*drag/su, "상단 헤더는 창 이동 영역이어야 합니다.");
@@ -55,6 +65,12 @@ assert.match(css, /\.icon-button\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "개
 const ui = await readFile(resolve(root, "ui/friend-messages-ui.js"), "utf8");
 assert.doesNotMatch(ui, /\bfetch\s*\(/u, "네트워크 요청은 main-side에서만 해야 합니다.");
 assert.doesNotMatch(ui, /localStorage|sessionStorage/u, "palette는 세션을 저장하면 안 됩니다.");
+for (const sticker of ["smile", "cheer", "love", "surprise", "sulk", "cry", "celebrate", "tired"]) assert.match(ui, new RegExp(`["']${sticker}["']`, "u"));
+assert.match(ui, /한 번 더 눌러 삭제/u, "모임 삭제는 inline 2단계 확인이어야 합니다.");
+assert.match(ui, /내보내기 확정/u, "멤버 내보내기는 inline 2단계 확인이어야 합니다.");
+assert.match(ui, /한 번 더 눌러 나가기/u, "모임 나가기는 inline 2단계 확인이어야 합니다.");
+assert.match(ui, /const codepointLength = \(value\) => \[\.\.\.String\(value \|\| ""\)\]\.length/u, "길이는 Unicode codepoint로 계산해야 합니다.");
+assert.match(ui, /setCustomValidity/u, "길이 초과는 브라우저 validation으로 알려야 합니다.");
 
 await import(resolve(root, "dap_friend_messages/plugin.mjs"));
 console.log(`DAP Friend Messages 검증 완료 (${required.length}개 배포 파일)`);
