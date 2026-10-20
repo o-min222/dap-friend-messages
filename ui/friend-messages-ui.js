@@ -4,16 +4,15 @@
   const bridge = window.dapPalette;
   const viewNames = ["home", "manage"];
   const ids = [
-    "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread",
-    "invite-count", "thread-list", "contact-empty", "view-detail", "detail-back", "detail-avatar",
-    "detail-kind", "detail-name", "detail-unread", "message-stack", "inbox-empty", "message-form", "composer-hint",
+    "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread", "home-title",
+    "invite-count", "message-list", "inbox-empty", "message-form", "composer-hint", "compose-recipient", "compose-back",
     "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-add-trigger", "friend-form", "friend-code",
     "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-row", "profile-form", "profile-name", "profile-current-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
     "invite-section", "invite-list", "group-add-trigger", "group-form", "group-name", "group-friend-options", "group-create-submit", "group-create-cancel", "group-list", "group-empty",
     "manage-dialog-backdrop", "manage-dialog", "manage-dialog-title", "manage-dialog-close", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel",
     "friend-detail-name", "friend-detail-status", "friend-message", "friend-alias-form", "friend-detail-alias", "friend-alias-save", "friend-alias-reset", "friend-block", "friend-remove",
-    "group-detail-name", "group-detail-status", "group-rename-form", "group-rename-name", "group-rename-save", "group-invite-controls", "group-invite-select", "group-invite-button", "group-member-list", "group-leave", "group-delete",
-    "invite-panel", "invite-detail-name", "invite-detail-status", "invite-accept", "invite-decline",
+    "group-detail-name", "group-detail-status", "group-message", "group-rename-form", "group-rename-name", "group-rename-save", "group-invite-controls", "group-invite-select", "group-invite-button", "group-member-list", "group-leave", "group-delete",
+    "invite-panel", "invite-detail-name", "invite-detail-status", "invite-accept", "invite-decline", "compose-panel",
     ...viewNames.flatMap((name) => [`tab-${name}`, `view-${name}`]),
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
@@ -35,11 +34,12 @@
   let deleteArmedGroupId = null;
   let removeArmedMemberKey = null;
   let leaveArmedGroupId = null;
-  let threadButtons = new Map();
+  let messageRecords = new Map();
   let manageButtons = new Map();
   let dialogKind = null;
   let dialogEntityId = "";
   let dialogTriggerKey = "";
+  let composeReturnKind = "";
   let dialogFocusables = [];
   let pendingDialogOperation = null;
   let groupFriendInputs = new Map();
@@ -125,140 +125,88 @@
     && pending.draftRevision === draftRevision
     && pending.snapshot === draftSnapshot());
 
-  function messageBelongsTo(message, target) {
-    if (!target) return false;
-    if (target.type === "anonymous") return message.anonymous && message.targetType !== "group";
-    if (target.type === "group") return message.targetType === "group" && message.targetId === target.id;
-    return !message.anonymous && message.targetType !== "group" && (message.senderId === target.id || message.targetId === target.id);
-  }
-
-  function targetMessages(target = selectedTarget) {
-    return model.messages.filter((message) => messageBelongsTo(message, target));
-  }
-
-  function unreadFor(target) {
-    return targetMessages(target).filter((message) => !message.openedAt).length;
-  }
-
-  function showView(name, restoreFocus = false) {
+  function showView(name) {
     if (!viewNames.includes(name)) return;
     activeView = name;
-    elements["view-detail"].hidden = true;
     for (const view of viewNames) {
       elements[`view-${view}`].hidden = view !== name;
       elements[`tab-${view}`].className = `tab${view === name ? " active" : ""}`;
       elements[`tab-${view}`].setAttribute("aria-current", view === name ? "page" : "false");
     }
-    if (restoreFocus && selectedTarget) {
-      const targetButton = threadButtons.get(targetKey(selectedTarget));
-      (targetButton || elements["tab-home"]).focus?.();
+  }
+  const messageLabel = (message) => {
+    if (message.anonymous && message.targetType !== "group") return "익명의 친구";
+    if (message.targetType === "group") {
+      const groupName = model.groups.find((group) => group.id === message.targetId)?.name || "모임";
+      return message.anonymous ? `익명의 친구 · ${groupName}` : `${message.senderName} · ${groupName}`;
     }
+    return message.senderName || "친구";
+  };
+
+  function messageSignature(message) {
+    return JSON.stringify({
+      opened: Boolean(message.openedAt), label: messageLabel(message), createdAt: message.createdAt,
+      anonymous: message.anonymous, senderName: message.senderName,
+      body: message.openedAt ? message.body : null, stickerId: message.openedAt ? message.stickerId : null,
+    });
   }
 
-  function openTarget(target) {
-    if (targetKey(selectedTarget) !== targetKey(target)) resetComposer();
-    selectedTarget = target;
-    activeView = "detail";
-    for (const view of viewNames) elements[`view-${view}`].hidden = true;
-    elements["view-detail"].hidden = false;
-    for (const view of viewNames) {
-      const homeActive = view === "home";
-      elements[`tab-${view}`].className = `tab${homeActive ? " active" : ""}`;
-      elements[`tab-${view}`].setAttribute("aria-current", homeActive ? "page" : "false");
+  function createMessageNode(message) {
+    if (message.openedAt) {
+      const paper = el("article", "opened-note");
+      paper.tabIndex = -1;
+      paper.setAttribute("aria-label", `${senderSubject(message)} 보낸 열린 쪽지`);
+      const meta = el("div", "note-meta");
+      meta.append(el("strong", "", messageLabel(message)), el("time", "", timeLabel(message.createdAt)));
+      const sticker = stickerNode(message.stickerId);
+      if (sticker) paper.append(sticker);
+      if (message.body) paper.append(el("p", "note-body", message.body));
+      paper.append(meta, el("small", "note-expiry", "잠시 뒤 사라져요"));
+      return paper;
     }
-    renderDetail();
-    elements["detail-name"].focus?.();
+    const envelope = el("button", "envelope");
+    envelope.type = "button";
+    envelope.setAttribute("aria-label", `${senderSubject(message)} 보낸 쪽지 열기`);
+    envelope.onclick = () => send({ type: "openMessage", messageId: message.id });
+    const copy = el("span", "envelope-copy");
+    copy.append(el("strong", "", messageLabel(message)), el("span", "", timeLabel(message.createdAt)));
+    envelope.append(el("span", "envelope-seal", "✦"), copy, el("span", "envelope-open", "열기"));
+    return envelope;
   }
 
-  function appendThread(list, target, meta, disabled = false) {
-    const item = el("li", "");
-    const button = el("button", "thread-row");
-    button.type = "button";
-    button.disabled = disabled;
-    button.setAttribute("aria-label", disabled ? `${target.name}, 차단됨` : `${target.name} 쪽지 상세 열기`);
-    const copy = el("span", "thread-copy");
-    copy.append(el("strong", "", target.name), el("small", "", meta));
-    const unread = unreadFor(target);
-    button.append(el("span", "thread-avatar", target.type === "group" ? "👥" : target.type === "anonymous" ? "?" : "✉"), copy);
-    if (unread) button.append(el("span", "badge", String(unread)));
-    button.onclick = () => openTarget(target);
-    item.append(button);
-    list.append(item);
-    threadButtons.set(targetKey(target), button);
-  }
-
-  function renderThreads() {
-    elements["thread-list"].replaceChildren();
-    threadButtons = new Map();
-    const anonymousTarget = { type: "anonymous", id: "anonymous", name: "익명 쪽지" };
-    const targets = [];
-    if (unreadFor(anonymousTarget) > 0) targets.push({ target: anonymousTarget, meta: "읽기 전용 · 보낸 사람 비공개", disabled: false });
-    for (const friend of model.friends) {
-      targets.push({ target: { type: "friend", id: friend.id, name: friend.name }, meta: friend.blocked ? "친구 · 차단됨" : "친구", disabled: friend.blocked });
+  function renderInbox(renderMeta = {}) {
+    const oldOrder = [...elements["message-list"].children];
+    const focusedRecord = [...messageRecords.entries()].find(([, record]) => record.node === document.activeElement);
+    const focusedId = focusedRecord?.[0] || "";
+    const focusedIndex = focusedRecord ? oldOrder.indexOf(focusedRecord[1].item) : -1;
+    const messages = [...model.messages].sort((left, right) => (new Date(right.createdAt).getTime() || 0) - (new Date(left.createdAt).getTime() || 0) || left.id.localeCompare(right.id));
+    const liveIds = new Set(messages.map((message) => message.id));
+    for (const [id, record] of messageRecords) {
+      if (!liveIds.has(id)) { record.item.remove?.(); messageRecords.delete(id); }
     }
-    for (const group of model.groups) {
-      targets.push({ target: { type: "group", id: group.id, name: group.name }, meta: `모임 · ${group.members.length}명`, disabled: false });
-    }
-    const newest = (target) => targetMessages(target).reduce((latest, message) => Math.max(latest, new Date(message.createdAt).getTime() || 0), 0);
-    targets.sort((left, right) => Number(unreadFor(right.target) > 0) - Number(unreadFor(left.target) > 0)
-      || newest(right.target) - newest(left.target)
-      || left.target.name.localeCompare(right.target.name, "ko"));
-    for (const item of targets) {
-      const hasOpened = targetMessages(item.target).some((message) => Boolean(message.openedAt));
-      const status = unreadFor(item.target) ? `${item.meta} · 새 쪽지 도착` : hasOpened ? `${item.meta} · 열어 본 쪽지가 잠시 표시 중` : item.meta;
-      appendThread(elements["thread-list"], item.target, status, item.disabled);
-    }
-    const hasContacts = targets.length > 0;
-    elements["contact-empty"].hidden = hasContacts;
-  }
-
-  function renderMessages(messages) {
-    elements["message-stack"].replaceChildren();
     for (const message of messages) {
-      if (message.openedAt) {
-        const paper = el("article", "opened-note");
-        paper.setAttribute("aria-label", `${senderSubject(message)} 보낸 열린 쪽지`);
-        const meta = el("div", "note-meta");
-        meta.append(el("strong", "", senderLabel(message)), el("time", "", timeLabel(message.createdAt)));
-        const sticker = stickerNode(message.stickerId);
-        if (sticker) paper.append(sticker);
-        if (message.body) paper.append(el("p", "note-body", message.body));
-        paper.append(meta, el("small", "note-expiry", "잠시 뒤 사라져요"));
-        elements["message-stack"].append(paper);
-      } else {
-        const envelope = el("button", "envelope");
-        envelope.type = "button";
-        envelope.setAttribute("aria-label", `${senderSubject(message)} 보낸 쪽지 열기`);
-        envelope.onclick = () => send({ type: "openMessage", messageId: message.id });
-        const copy = el("span", "envelope-copy");
-        copy.append(el("strong", "", senderLabel(message)), el("span", "", timeLabel(message.createdAt)));
-        envelope.append(el("span", "envelope-seal", "✦"), copy, el("span", "envelope-open", "펼쳐보기"));
-        elements["message-stack"].append(envelope);
+      const signature = messageSignature(message);
+      let record = messageRecords.get(message.id);
+      if (!record) {
+        const item = el("li", "message-item"); const node = createMessageNode(message); item.append(node);
+        record = { item, node, signature }; messageRecords.set(message.id, record);
+      } else if (record.signature !== signature) {
+        const node = createMessageNode(message); record.item.replaceChildren(node); record = { ...record, node, signature }; messageRecords.set(message.id, record);
       }
     }
+    const orderedRecords = messages.map((message) => messageRecords.get(message.id));
+    for (let index = 0; index < orderedRecords.length; index += 1) {
+      const item = orderedRecords[index].item;
+      if (elements["message-list"].children[index] !== item) elements["message-list"].insertBefore(item, elements["message-list"].children[index] || null);
+    }
     elements["inbox-empty"].hidden = messages.length > 0;
-  }
-
-  function renderDetail() {
-    if (!selectedTarget) return showView("home");
-    const currentContact = selectedTarget.type === "friend"
-      ? model.friends.find((friend) => friend.id === selectedTarget.id && !friend.blocked)
-      : selectedTarget.type === "group" ? model.groups.find((group) => group.id === selectedTarget.id) : null;
-    const exists = selectedTarget.type === "anonymous" ? targetMessages(selectedTarget).length > 0 : Boolean(currentContact);
-    if (!exists) { selectedTarget = null; return showView("home"); }
-    if (currentContact) selectedTarget = { ...selectedTarget, name: currentContact.name };
-    const messages = targetMessages();
-    const unread = unreadFor(selectedTarget);
-    elements["detail-name"].textContent = selectedTarget.name;
-    elements["detail-kind"].textContent = selectedTarget.type === "group" ? `모임 · ${currentContact?.members?.length || 0}명` : selectedTarget.type === "anonymous" ? "읽기 전용 · 보낸 사람 비공개" : "친구";
-    elements["detail-avatar"].textContent = selectedTarget.type === "group" ? "👥" : selectedTarget.type === "anonymous" ? "?" : "☺";
-    elements["detail-unread"].textContent = String(unread);
-    elements["detail-unread"].hidden = !unread;
-    elements["message-form"].hidden = selectedTarget.type === "anonymous";
-    elements["composer-hint"].hidden = selectedTarget.type !== "group";
-    elements.send.disabled = model.busy || Boolean(pendingSend) || selectedTarget.type === "anonymous";
-    renderAnonymousToggle(); renderStickerTray();
-    renderMessages(messages);
+    if (renderMeta.openedMessageId) return messageRecords.get(renderMeta.openedMessageId)?.node.focus?.();
+    if (focusedId && messageRecords.has(focusedId)) return messageRecords.get(focusedId).node.focus?.();
+    if (focusedId && !messageRecords.has(focusedId)) {
+      const fallback = orderedRecords[focusedIndex] || orderedRecords[focusedIndex - 1];
+      const fallbackNode = fallback?.node || elements["home-title"];
+      fallbackNode?.focus?.();
+    }
   }
 
   function renderStickers() {
@@ -282,7 +230,7 @@
     dialogKind = null; dialogEntityId = ""; dialogTriggerKey = ""; dialogFocusables = []; pendingDialogOperation = null;
     removeArmedFriendId = null; deleteArmedGroupId = null; removeArmedMemberKey = null; leaveArmedGroupId = null;
     elements["manage-dialog-backdrop"].hidden = true;
-    for (const id of ["profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel", "invite-panel"]) elements[id].hidden = true;
+    for (const id of ["profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel", "invite-panel", "compose-panel"]) elements[id].hidden = true;
     if (restoreFocus) (triggerFor(triggerKey) || elements["tab-manage"]).focus?.();
   }
 
@@ -307,7 +255,7 @@
   function renderManageDialog(initial = false) {
     if (!dialogKind) return;
     elements["manage-dialog-backdrop"].hidden = false;
-    for (const id of ["profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel", "invite-panel"]) elements[id].hidden = true;
+    for (const id of ["profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel", "invite-panel", "compose-panel"]) elements[id].hidden = true;
     let firstFocus = elements["manage-dialog-title"];
     if (dialogKind === "profile") {
       elements["profile-panel"].hidden = false; elements["manage-dialog-title"].textContent = "내 프로필";
@@ -363,7 +311,8 @@
       const deleteArmed = deleteArmedGroupId === group.id; elements["group-delete"].textContent = deleteArmed ? "한 번 더 눌러 삭제" : "모임 삭제"; elements["group-delete"].setAttribute("aria-label", deleteArmed ? `${group.name} 모임 삭제 확정` : `${group.name} 모임 삭제 확인`);
       const leaveArmed = leaveArmedGroupId === group.id; elements["group-leave"].textContent = leaveArmed ? "한 번 더 눌러 나가기" : "모임 나가기"; elements["group-leave"].setAttribute("aria-label", leaveArmed ? `${group.name} 모임 나가기 확정` : `${group.name} 모임 나가기 확인`);
       elements["group-delete"].disabled = Boolean(pendingDialogOperation); elements["group-leave"].disabled = Boolean(pendingDialogOperation);
-      setDialogFocusables([elements["group-rename-name"], elements["group-rename-save"], elements["group-invite-select"], elements["group-invite-button"], ...memberButtons, elements["group-leave"], elements["group-delete"]]);
+      elements["group-message"].disabled = Boolean(pendingDialogOperation);
+      setDialogFocusables([elements["group-message"], elements["group-rename-name"], elements["group-rename-save"], elements["group-invite-select"], elements["group-invite-button"], ...memberButtons, elements["group-leave"], elements["group-delete"]]);
     } else if (dialogKind === "invite") {
       const invite = model.groupInvites.find((item) => item.id === dialogEntityId);
       if (!invite) return closeManageDialog(true);
@@ -371,6 +320,18 @@
       elements["invite-detail-name"].textContent = invite.groupName; elements["invite-detail-status"].textContent = `${invite.inviterName}님의 초대`;
       elements["invite-accept"].disabled = Boolean(pendingDialogOperation); elements["invite-decline"].disabled = Boolean(pendingDialogOperation);
       setDialogFocusables([elements["invite-accept"], elements["invite-decline"]]); firstFocus = elements["invite-accept"];
+    } else if (dialogKind === "compose") {
+      const contact = selectedTarget?.type === "friend"
+        ? model.friends.find((friend) => friend.id === selectedTarget.id && !friend.blocked)
+        : selectedTarget?.type === "group" ? model.groups.find((group) => group.id === selectedTarget.id) : null;
+      if (!contact) return closeManageDialog(true);
+      selectedTarget = { ...selectedTarget, name: contact.name };
+      elements["compose-panel"].hidden = false; elements["manage-dialog-title"].textContent = "쪽지 보내기";
+      elements["compose-recipient"].textContent = contact.name;
+      elements["composer-hint"].textContent = selectedTarget.type === "group" ? `${contact.members.length}명 모임 전체에게 보내요` : "친구에게 보내요";
+      elements.send.disabled = model.busy || Boolean(pendingSend);
+      renderAnonymousToggle(); renderStickerTray();
+      setDialogFocusables([elements["compose-back"], elements["sticker-toggle"], elements["message-body"], elements["anonymous-toggle"], elements.send]); firstFocus = elements["message-body"];
     }
     if (initial) firstFocus.focus?.();
   }
@@ -378,6 +339,12 @@
   function openManageDialog(kind, entityId, triggerKey) {
     dialogKind = kind; dialogEntityId = entityId || ""; dialogTriggerKey = triggerKey; pendingDialogOperation = null;
     removeArmedFriendId = null; deleteArmedGroupId = null; removeArmedMemberKey = null; leaveArmedGroupId = null;
+    renderManageDialog(true);
+  }
+
+  function openComposer(target, returnKind) {
+    if (targetKey(selectedTarget) !== targetKey(target)) resetComposer();
+    selectedTarget = target; composeReturnKind = returnKind; dialogKind = "compose"; pendingDialogOperation = null;
     renderManageDialog(true);
   }
 
@@ -403,20 +370,19 @@
     else if (focusedManageKey) (manageButtons.get(focusedManageKey) || elements["tab-manage"]).focus?.();
   }
 
-  function render() {
+  function render(renderMeta = {}) {
     const connected = model.connection === "connected";
     elements.app.setAttribute("aria-busy", model.busy || model.connection === "checking" ? "true" : "false");
     elements["connect-panel"].hidden = connected; elements.workspace.hidden = !connected; elements.refresh.hidden = !connected;
     elements["connect-google"].disabled = model.busy || model.connection === "checking";
     if (!connected) { elements.status.textContent = model.error || (model.connection === "checking" ? "Google 연결 상태를 확인하고 있어요." : "Google 연결이 필요해요."); return; }
-    renderThreads(); renderManagement();
+    renderInbox(renderMeta); renderManagement();
     elements["nav-unread"].textContent = String(model.unreadCount || 0); elements["nav-unread"].hidden = !model.unreadCount;
-    if (activeView === "detail") renderDetail(); else showView(activeView);
+    showView(activeView);
     elements.status.textContent = model.error ? `연결 오류: ${model.error}` : model.busy ? "새 쪽지를 확인하는 중…" : model.lastSyncedAt ? `${timeLabel(model.lastSyncedAt)}에 확인했어요.` : "쪽지함을 준비하고 있어요.";
   }
 
   for (const name of viewNames) elements[`tab-${name}`].onclick = () => showView(name);
-  elements["detail-back"].onclick = () => showView("home", true);
   elements["profile-row"].onclick = () => openManageDialog("profile", "", "profile");
   elements["friend-add-trigger"].onclick = () => openManageDialog("friend-add", "", "friend-add");
   elements["group-add-trigger"].onclick = () => openManageDialog("group-create", "", "group-add");
@@ -425,6 +391,7 @@
   elements["friend-add-cancel"].onclick = () => closeManageDialog(true);
   elements["group-create-cancel"].onclick = () => closeManageDialog(true);
   elements["manage-dialog"].addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && dialogKind === "compose" && stickerTrayOpen) { event.preventDefault?.(); stickerTrayOpen = false; renderStickerTray(); elements["sticker-toggle"].focus?.(); return; }
     if (event.key === "Escape") { event.preventDefault?.(); closeManageDialog(true); return; }
     if (event.key !== "Tab" || dialogFocusables.length === 0) return;
     const index = dialogFocusables.indexOf(document.activeElement); const backwards = event.shiftKey === true;
@@ -433,7 +400,7 @@
   elements["message-body"].addEventListener("input", () => { draftRevision += 1; const count = codepointLength(elements["message-body"].value); elements.counter.textContent = `${count} / ${model.maxMessageLength}`; updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지"); resizeComposer(); });
   elements["sticker-toggle"].onclick = () => { stickerTrayOpen = !stickerTrayOpen; renderStickerTray(); if (stickerTrayOpen) elements["sticker-grid"].children[0]?.focus?.(); };
   elements["anonymous-toggle"].onclick = () => { anonymousSelected = !anonymousSelected; draftRevision += 1; renderAnonymousToggle(); };
-  elements["message-form"].addEventListener("keydown", (event) => { if (event.key === "Escape" && stickerTrayOpen) { event.preventDefault?.(); stickerTrayOpen = false; renderStickerTray(); elements["sticker-toggle"].focus?.(); } });
+  elements["message-form"].addEventListener("keydown", (event) => { if (event.key === "Escape" && stickerTrayOpen) { event.preventDefault?.(); event.stopPropagation?.(); stickerTrayOpen = false; renderStickerTray(); elements["sticker-toggle"].focus?.(); } });
   elements["group-name"].addEventListener("input", () => updateLengthValidity(elements["group-name"], 30, "모임 이름"));
   elements["group-rename-name"].addEventListener("input", () => updateLengthValidity(elements["group-rename-name"], 30, "모임 이름"));
   elements["friend-alias"].addEventListener("input", () => updateNameValidity(elements["friend-alias"], "친구 별칭"));
@@ -444,10 +411,12 @@
   elements["profile-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateNameValidity(elements["profile-name"], "공개 별명", true)) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "profile", operationId }; send({ type: "updateProfileName", name: elements["profile-name"].value, operationId }); renderManageDialog(false); });
   elements["friend-alias-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateNameValidity(elements["friend-detail-alias"], "친구 별칭")) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "friend-alias", operationId }; send({ type: "updateFriendAlias", friendId: dialogEntityId, alias: elements["friend-detail-alias"].value, operationId }); renderManageDialog(false); });
   elements["friend-alias-reset"].onclick = () => { if (pendingDialogOperation) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "friend-alias", operationId }; send({ type: "updateFriendAlias", friendId: dialogEntityId, alias: null, operationId }); renderManageDialog(false); };
-  elements["friend-message"].onclick = () => { const friend = model.friends.find((item) => item.id === dialogEntityId); if (!friend || friend.blocked) return; closeManageDialog(false); openTarget({ type: "friend", id: friend.id, name: friend.name }); };
+  elements["friend-message"].onclick = () => { const friend = model.friends.find((item) => item.id === dialogEntityId); if (!friend || friend.blocked) return; openComposer({ type: "friend", id: friend.id, name: friend.name }, "friend"); };
+  elements["group-message"].onclick = () => { const group = model.groups.find((item) => item.id === dialogEntityId); if (!group) return; openComposer({ type: "group", id: group.id, name: group.name }, "group"); };
+  elements["compose-back"].onclick = () => { if (!composeReturnKind) return closeManageDialog(true); dialogKind = composeReturnKind; renderManageDialog(false); elements[composeReturnKind === "friend" ? "friend-message" : "group-message"].focus?.(); };
   elements["friend-block"].onclick = () => { const friend = model.friends.find((item) => item.id === dialogEntityId); if (!friend || pendingDialogOperation) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "friend-block", operationId }; send({ type: friend.blocked ? "unblockFriend" : "blockFriend", friendId: friend.id, operationId }); renderManageDialog(false); };
   elements["friend-remove"].onclick = () => { const friend = model.friends.find((item) => item.id === dialogEntityId); if (!friend || pendingDialogOperation) return; if (removeArmedFriendId !== friend.id) { removeArmedFriendId = friend.id; renderManageDialog(false); } else { const operationId = nextOperationId(); removeArmedFriendId = null; pendingDialogOperation = { kind: "friend-remove", operationId }; send({ type: "removeFriend", friendId: friend.id, operationId }); renderManageDialog(false); } };
-  elements["message-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingSend || !selectedTarget || selectedTarget.type === "anonymous") return; if (!updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지")) return; const operationId = nextOperationId(); pendingSend = { targetKey: targetKey(selectedTarget), operationId, draftRevision, snapshot: draftSnapshot() }; send({ type: "sendMessage", targetType: selectedTarget.type, targetId: selectedTarget.id, body: elements["message-body"].value, stickerId: selectedStickerId, anonymous: anonymousSelected === true, operationId }); renderDetail(); });
+  elements["message-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingSend || !selectedTarget) return; if (!updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지")) return; const operationId = nextOperationId(); pendingSend = { targetKey: targetKey(selectedTarget), operationId, draftRevision, snapshot: draftSnapshot() }; send({ type: "sendMessage", targetType: selectedTarget.type, targetId: selectedTarget.id, body: elements["message-body"].value, stickerId: selectedStickerId, anonymous: anonymousSelected === true, operationId }); renderManageDialog(false); });
   elements["group-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateLengthValidity(elements["group-name"], 30, "모임 이름")) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "group-create", operationId }; send({ type: "createGroup", name: elements["group-name"].value, memberIds: [...groupMemberIds], operationId }); renderManageDialog(false); });
   elements["group-rename-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateLengthValidity(elements["group-rename-name"], 30, "모임 이름")) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "group-rename", operationId }; send({ type: "updateGroup", groupId: dialogEntityId, name: elements["group-rename-name"].value, operationId }); renderManageDialog(false); });
   elements["group-invite-button"].onclick = () => { if (pendingDialogOperation || !elements["group-invite-select"].value) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "group-invite", operationId }; send({ type: "inviteGroup", groupId: dialogEntityId, memberIds: [elements["group-invite-select"].value], operationId }); renderManageDialog(false); };
@@ -462,17 +431,18 @@
       const completedDialogOperation = pendingDialogOperation?.operationId === message.operationId ? pendingDialogOperation : null;
       const completedSend = pendingSend?.operationId === message.operationId ? pendingSend : null;
       const shouldResetSentDraft = completedSend && message.sentTo === completedSend.targetKey && pendingMatchesDraft(completedSend);
+      const sentComposeStillOpen = dialogKind === "compose";
       if (completedSend) pendingSend = null;
-      model = { groups: [], groupInvites: [], ...message.state }; render();
+      model = { groups: [], groupInvites: [], ...message.state }; render(message);
       if (message.notice) elements.status.textContent = message.notice;
-      if (shouldResetSentDraft) resetComposer();
+      if (shouldResetSentDraft) { resetComposer(); if (sentComposeStillOpen) { dialogKind = composeReturnKind; renderManageDialog(false); elements[composeReturnKind === "friend" ? "friend-message" : "group-message"].focus?.(); } }
       if (completedDialogOperation) {
         pendingDialogOperation = null;
         if (["profile", "friend-add", "friend-alias", "group-create", "friend-remove", "group-delete", "group-leave", "invite-response"].includes(completedDialogOperation.kind)) closeManageDialog(true);
         else { if (completedDialogOperation.kind === "group-invite") elements["group-invite-select"].value = ""; renderManageDialog(false); }
       }
     } else if (message?.type === "error") {
-      if (pendingSend?.operationId === message.operationId) { pendingSend = null; if (activeView === "detail") renderDetail(); }
+      if (pendingSend?.operationId === message.operationId) { pendingSend = null; if (dialogKind === "compose") renderManageDialog(false); }
       if (pendingDialogOperation?.operationId === message.operationId) pendingDialogOperation = null;
       elements.status.textContent = message.message;
       renderManageDialog(false);
@@ -482,6 +452,7 @@
       else if (dialogKind === "group-create") elements["group-name"].focus?.();
       else if (dialogKind === "group") elements["group-rename-name"].focus?.();
       else if (dialogKind === "invite") elements["invite-accept"].focus?.();
+      else if (dialogKind === "compose") elements["message-body"].focus?.();
     }
   });
 
