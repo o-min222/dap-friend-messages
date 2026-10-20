@@ -15,7 +15,7 @@ const allText = (node) => [node.textContent, ...node.children.map(allText)].join
 
 async function harness() {
   const views = ["inbox", "compose", "friends", "groups"];
-  const ids = ["app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread", "invite-count", "message-stack", "inbox-empty", "message-form", "target-type", "target-select", "sticker-grid", "message-body", "counter", "send", "my-code", "friend-form", "friend-code", "friend-list", "friend-empty", "invite-section", "invite-list", "group-form", "group-name", "group-friend-options", "group-list", "group-empty", ...views.flatMap((name) => [`tab-${name}`, `view-${name}`])];
+  const ids = ["app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread", "invite-count", "message-stack", "inbox-empty", "message-form", "target-type", "target-select", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-form", "friend-code", "friend-list", "friend-empty", "invite-section", "invite-list", "group-form", "group-name", "group-friend-options", "group-list", "group-empty", ...views.flatMap((name) => [`tab-${name}`, `view-${name}`])];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
   elements["target-type"].value = "friend";
   const sent = []; let onMessage;
@@ -69,6 +69,34 @@ test("친구 또는 모임과 preset sticker ID를 선택해 쪽지를 보낸다
   view.elements["message-body"].value = "오늘도 파이팅";
   view.elements["message-form"].listeners.submit({ preventDefault() {} });
   assert.deepEqual({ type: view.sent.at(-1).type, targetType: view.sent.at(-1).targetType, targetId: view.sent.at(-1).targetId, stickerId: view.sent.at(-1).stickerId }, { type: "sendMessage", targetType: "group", targetId: "g1", stickerId: "celebrate" });
+  assert.equal(view.sent.at(-1).anonymous, false);
+});
+
+test("익명 토글을 payload에 담고 전송 성공 뒤 해제한다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next });
+  view.elements["target-select"].value = "f1";
+  view.elements["message-body"].value = "응원할게";
+  view.elements["anonymous-toggle"].checked = true;
+  view.elements["message-form"].listeners.submit({ preventDefault() {} });
+  assert.equal(view.sent.at(-1).anonymous, true);
+  view.onMessage({ type: "state", state: next, sentTo: "friend:f1" });
+  assert.equal(view.elements["anonymous-toggle"].checked, false);
+});
+
+test("받은 익명 쪽지는 발신자 이름을 노출하지 않고 자연스럽게 안내한다", async () => {
+  const view = await harness(); const next = state();
+  next.messages = [{ ...next.messages[0], anonymous: true, senderId: "", senderName: "익명의 친구" }];
+  view.onMessage({ type: "state", state: next });
+  const envelope = view.elements["message-stack"].children[0];
+  assert.match(allText(envelope), /익명의 친구/u);
+  assert.doesNotMatch(allText(envelope), /하늘/u);
+  assert.equal(envelope.attributes["aria-label"], "익명의 친구가 보낸 쪽지 열기");
+  assert.doesNotMatch(envelope.attributes["aria-label"], /익명의 친구 님/u);
+  next.messages[0] = { ...next.messages[0], openedAt: new Date().toISOString(), body: "비밀 응원" };
+  view.onMessage({ type: "state", state: next });
+  const opened = view.elements["message-stack"].children[0];
+  assert.equal(opened.attributes["aria-label"], "익명의 친구가 보낸 열린 쪽지");
+  assert.doesNotMatch(allText(opened), /하늘|익명의 친구 님/u);
 });
 
 test("친구 삭제는 같은 친구에서 두 번째 클릭에만 전송한다", async () => {

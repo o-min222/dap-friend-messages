@@ -108,12 +108,14 @@ function normalizeMetadata(raw) {
   if (!raw || typeof raw !== "object") return null;
   const id = String(raw.message_id || raw.id || "");
   if (!id) return null;
+  const anonymous = raw.anonymous === true || raw.is_anonymous === true;
   return {
     id,
-    senderId: String(raw.sender_id || ""),
-    senderName: String(raw.sender_name || raw.display_name || "친구").slice(0, 40),
+    anonymous,
+    senderId: anonymous ? "" : String(raw.sender_id || ""),
+    senderName: anonymous ? "익명의 친구" : String(raw.sender_name || raw.display_name || "친구").slice(0, 40),
     targetType: raw.target_type === "group" || raw.group_id ? "group" : "friend",
-    targetId: String(raw.target_id || raw.group_id || raw.sender_id || ""),
+    targetId: String(raw.target_id || raw.group_id || (anonymous ? "" : raw.sender_id) || ""),
     targetName: String(raw.target_name || raw.group_name || "").slice(0, 40),
     stickerId: STICKER_IDS.includes(raw.sticker_id) ? raw.sticker_id : null,
     createdAt: String(raw.created_at || new Date().toISOString()),
@@ -180,6 +182,7 @@ function normalizeState(payload) {
 
 function normalizeOpenedMessage(payload, fallback) {
   const source = payload?.message || payload || {};
+  const anonymous = source.anonymous === true || source.is_anonymous === true || fallback?.anonymous === true;
   const body = String(source.body || source.message || "").slice(0, MESSAGE_MAX_LENGTH);
   const stickerId = STICKER_IDS.includes(source.sticker_id || source.stickerId)
     ? source.sticker_id || source.stickerId
@@ -188,6 +191,9 @@ function normalizeOpenedMessage(payload, fallback) {
   const expiresAt = expiryMillis(source.expires_at) || Date.now() + 5_000;
   return {
     ...fallback,
+    anonymous,
+    senderId: anonymous ? "" : String(fallback?.senderId || ""),
+    senderName: anonymous ? "익명의 친구" : String(fallback?.senderName || "친구").slice(0, 40),
     body,
     stickerId,
     openedAt: String(source.opened_at || new Date().toISOString()),
@@ -424,6 +430,7 @@ export function activate(ctx) {
           targetId,
           body: outgoing.body,
           stickerId: outgoing.stickerId,
+          anonymous: message.anonymous === true,
           clientNonce: clientNonce(),
         });
         pushState({ notice: "쪽지를 보냈어요.", sentTo: `${targetType}:${targetId}` });

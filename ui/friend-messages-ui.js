@@ -6,7 +6,7 @@
   const ids = [
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread",
     "invite-count", "message-stack", "inbox-empty", "message-form", "target-type", "target-select",
-    "sticker-grid", "message-body", "counter", "send", "my-code", "friend-form", "friend-code",
+    "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-form", "friend-code",
     "friend-list", "friend-empty", "invite-section", "invite-list", "group-form", "group-name",
     "group-friend-options", "group-list", "group-empty",
     ...viewNames.flatMap((name) => [`tab-${name}`, `view-${name}`]),
@@ -48,6 +48,8 @@
     const preset = stickerMap[id];
     return preset ? el("span", "note-sticker", preset.emoji) : null;
   };
+  const senderLabel = (message) => message.anonymous ? "익명의 친구" : message.senderName;
+  const senderSubject = (message) => message.anonymous ? "익명의 친구가" : `${message.senderName} 님이`;
 
   function showView(name) {
     if (!viewNames.includes(name)) return;
@@ -65,9 +67,9 @@
     for (const message of model.messages) {
       if (message.openedAt) {
         const paper = el("article", "opened-note");
-        paper.setAttribute("aria-label", `${message.senderName} 님이 보낸 열린 쪽지`);
+        paper.setAttribute("aria-label", `${senderSubject(message)} 보낸 열린 쪽지`);
         const meta = el("div", "note-meta");
-        meta.append(el("strong", "", message.targetType === "group" ? `${message.targetName || "모임"} · ${message.senderName}` : message.senderName), el("time", "", timeLabel(message.createdAt)));
+        meta.append(el("strong", "", message.targetType === "group" ? `${message.targetName || "모임"} · ${senderLabel(message)}` : senderLabel(message)), el("time", "", timeLabel(message.createdAt)));
         const sticker = stickerNode(message.stickerId);
         if (sticker) paper.append(sticker);
         if (message.body) paper.append(el("p", "note-body", message.body));
@@ -76,11 +78,11 @@
       } else {
         const envelope = el("button", "envelope");
         envelope.type = "button";
-        envelope.setAttribute("aria-label", `${message.senderName} 님이 보낸 쪽지 열기`);
+        envelope.setAttribute("aria-label", `${senderSubject(message)} 보낸 쪽지 열기`);
         envelope.onclick = () => send({ type: "openMessage", messageId: message.id });
         const seal = el("span", "envelope-seal", "✦");
         const copy = el("span", "envelope-copy");
-        copy.append(el("strong", "", message.targetType === "group" ? message.targetName || "모임 쪽지" : message.senderName), el("span", "", `${message.senderName} · ${timeLabel(message.createdAt)}`));
+        copy.append(el("strong", "", message.targetType === "group" ? message.targetName || "모임 쪽지" : senderLabel(message)), el("span", "", `${senderLabel(message)} · ${timeLabel(message.createdAt)}`));
         envelope.append(seal, copy, el("span", "envelope-open", "펼쳐보기"));
         elements["message-stack"].append(envelope);
       }
@@ -248,10 +250,10 @@
   elements["group-name"].addEventListener("input", () => updateLengthValidity(elements["group-name"], 30, "모임 이름"));
   elements["friend-code"].addEventListener("input", () => { elements["friend-code"].value = elements["friend-code"].value.toUpperCase().replace(/[^A-F0-9]/gu, "").slice(0, 6); });
   elements["friend-form"].addEventListener("submit", (event) => { event.preventDefault(); send({ type: "addFriend", code: elements["friend-code"].value }); });
-  elements["message-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지")) return; const targetType = elements["target-type"].value === "group" ? "group" : "friend"; send({ type: "sendMessage", targetType, targetId: elements["target-select"].value, body: elements["message-body"].value, stickerId: selectedStickerId }); });
+  elements["message-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지")) return; const targetType = elements["target-type"].value === "group" ? "group" : "friend"; send({ type: "sendMessage", targetType, targetId: elements["target-select"].value, body: elements["message-body"].value, stickerId: selectedStickerId, anonymous: elements["anonymous-toggle"].checked === true }); });
   elements["group-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateLengthValidity(elements["group-name"], 30, "모임 이름")) return; send({ type: "createGroup", name: elements["group-name"].value, memberIds: [...groupMemberIds] }); });
   elements["connect-google"].onclick = () => send({ type: "connectGoogle" }); elements.refresh.onclick = () => send({ type: "refresh" }); elements.close.onclick = () => bridge?.close?.();
-  bridge?.onMessage?.((message) => { if (message?.type === "state") { removeArmedFriendId = null; deleteArmedGroupId = null; removeArmedMemberKey = null; leaveArmedGroupId = null; model = { groups: [], groupInvites: [], ...message.state }; render(); if (message.notice) elements.status.textContent = message.notice; if (message.sentTo) { elements["message-body"].value = ""; selectedStickerId = null; renderStickers(); elements.counter.textContent = `0 / ${model.maxMessageLength}`; } } else if (message?.type === "error") elements.status.textContent = message.message; });
+  bridge?.onMessage?.((message) => { if (message?.type === "state") { removeArmedFriendId = null; deleteArmedGroupId = null; removeArmedMemberKey = null; leaveArmedGroupId = null; model = { groups: [], groupInvites: [], ...message.state }; render(); if (message.notice) elements.status.textContent = message.notice; if (message.sentTo) { elements["message-body"].value = ""; elements["anonymous-toggle"].checked = false; selectedStickerId = null; renderStickers(); elements.counter.textContent = `0 / ${model.maxMessageLength}`; } } else if (message?.type === "error") elements.status.textContent = message.message; });
 
   renderStickers(); render(); send({ type: "ready" });
 })();
