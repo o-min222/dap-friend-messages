@@ -21,7 +21,7 @@ for (const path of required) assert.ok((await stat(resolve(root, path))).isFile(
 const manifest = await readFile(resolve(root, "plugin.yaml"), "utf8");
 for (const line of [
   "id: dap.friend_messages",
-  "version: 0.5.1",
+  "version: 0.5.2",
   "entry: dap_friend_messages.plugin:activate",
   "min_app_version: 1.4.0",
   "  - window.palette",
@@ -29,7 +29,7 @@ for (const line of [
 ]) assert.ok(manifest.includes(line), `plugin.yaml에 '${line}'이 필요합니다.`);
 assert.doesNotMatch(manifest, /storage\.private/u, "메모리 세션만 사용하므로 storage.private 권한이 없어야 합니다.");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-assert.equal(packageJson.version, "0.5.1", "plugin.yaml과 package.json 버전이 같아야 합니다.");
+assert.equal(packageJson.version, "0.5.2", "plugin.yaml과 package.json 버전이 같아야 합니다.");
 
 const entry = await readFile(resolve(root, "dap_friend_messages/plugin.mjs"), "utf8");
 assert.doesNotMatch(entry, /^\s*import\s+.+from\s+["'][^./]/mu, "plugin.mjs에는 bare import를 사용할 수 없습니다.");
@@ -71,6 +71,10 @@ assert.match(html, /익명으로 보내기/u);
 assert.match(html, /받는 사람에게만 익명이며, 운영상 발신자 정보는 서버에 보관됩니다/u);
 assert.match(html, /내가 부를 이름/u);
 assert.match(html, /Google 이름은 공개하지 않으며 이 별명만 친구에게 보입니다/u);
+assert.match(html, /id="profile-edit-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="profile-form"/u);
+assert.match(html, /id="profile-form" hidden/u, "공개 별명 입력은 기본 상태에서 숨겨야 합니다.");
+assert.match(html, /id="friend-add-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="friend-form"/u);
+assert.match(html, /id="friend-form"[^>]* hidden/u, "친구 추가 입력은 기본 상태에서 숨겨야 합니다.");
 assert.doesNotMatch(html, /type="file"|업로드/u, "스티커 업로드 UI를 제공하면 안 됩니다.");
 assert.doesNotMatch(html, /<textarea[^>]*maxlength=|id="group-name"[^>]*maxlength=/u, "Unicode codepoint 검증 필드에 maxlength를 사용하면 안 됩니다.");
 assert.doesNotMatch(html, /id="(?:friend-alias|profile-name)"[^>]*maxlength=/u, "이름 필드는 maxlength 대신 Unicode codepoint 검증을 사용해야 합니다.");
@@ -101,6 +105,8 @@ assert.match(ui, /const codepointLength = \(value\) => \[\.\.\.String\(value \|\
 assert.match(entry, /\[\\p\{Cc\}\\p\{Cf\}\]/u, "main 이름 검증은 Unicode Cc/Cf 문자를 거부해야 합니다.");
 assert.match(ui, /\[\\p\{Cc\}\\p\{Cf\}\]/u, "palette 이름 검증은 Unicode Cc/Cf 문자를 거부해야 합니다.");
 assert.match(ui, /setCustomValidity/u, "길이 초과는 브라우저 validation으로 알려야 합니다.");
+assert.match(ui, /friendAliasDraft/u, "친구 별칭 실패 시 입력 초안을 보존해야 합니다.");
+assert.match(ui, /message\.notice === "공개 별명을 바꿨어요\."/u, "프로필 편집기는 성공 notice 뒤에만 닫아야 합니다.");
 
 await import(resolve(root, "dap_friend_messages/plugin.mjs"));
 console.log(`DAP Friend Messages 검증 완료 (${required.length}개 배포 파일)`);

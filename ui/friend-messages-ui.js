@@ -7,8 +7,8 @@
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread",
     "invite-count", "anonymous-thread-section", "anonymous-thread-list", "friend-thread-list", "group-thread-list", "contact-empty", "view-detail", "detail-back",
     "detail-kind", "detail-name", "detail-unread", "message-stack", "inbox-empty", "message-form", "composer-hint",
-    "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-form", "friend-code",
-    "friend-alias", "profile-form", "profile-name", "profile-current-name", "friend-list", "friend-empty",
+    "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-add-toggle", "friend-form", "friend-code",
+    "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-edit-toggle", "profile-form", "profile-name", "profile-current-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
     "invite-section", "invite-list", "group-form", "group-name", "group-friend-options", "group-list", "group-empty",
     ...viewNames.flatMap((name) => [`tab-${name}`, `view-${name}`]),
   ];
@@ -28,6 +28,26 @@
   let removeArmedMemberKey = null;
   let leaveArmedGroupId = null;
   let threadButtons = new Map();
+  let editingProfile = false;
+  let profileDraft = "";
+  let pendingProfileOperationId = null;
+  let editingFriendId = null;
+  let friendAliasDraft = "";
+  let pendingFriendAlias = null;
+  let friendAliasInput = null;
+  let friendEditButtons = new Map();
+  let friendAddOpen = false;
+  let friendCodeDraft = "";
+  let newFriendAliasDraft = "";
+  let pendingFriendAddOperationId = null;
+  let operationSequence = 0;
+  const operationSessionId = globalThis.crypto?.randomUUID?.().replaceAll("-", "").slice(0, 12)
+    || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`.slice(0, 18);
+
+  const nextOperationId = () => `palette-${operationSessionId}-${++operationSequence}`;
+  const closeProfileEditor = () => { editingProfile = false; profileDraft = ""; pendingProfileOperationId = null; };
+  const closeFriendAliasEditor = () => { editingFriendId = null; friendAliasDraft = ""; pendingFriendAlias = null; };
+  const closeFriendAddEditor = () => { friendAddOpen = false; friendCodeDraft = ""; newFriendAliasDraft = ""; pendingFriendAddOperationId = null; };
 
   const send = (message) => bridge?.postMessage?.(message);
   const codepointLength = (value) => [...String(value || "")].length;
@@ -205,6 +225,8 @@
 
   function renderFriends() {
     elements["friend-list"].replaceChildren();
+    friendAliasInput = null;
+    friendEditButtons = new Map();
     for (const friend of model.friends) {
       const publicName = friend.publicName || friend.name || "친구";
       const item = el("li", "manage-item friend-item");
@@ -216,18 +238,43 @@
       const armed = removeArmedFriendId === friend.id;
       const remove = el("button", "text-button danger", armed ? "삭제 확정" : "삭제"); remove.type = "button"; remove.setAttribute("aria-label", armed ? `${friend.name} 삭제 확정` : `${friend.name} 삭제 확인`);
       remove.onclick = () => { if (!armed) { removeArmedFriendId = friend.id; renderFriends(); } else { removeArmedFriendId = null; send({ type: "removeFriend", friendId: friend.id }); renderFriends(); } };
-      const aliasEditor = el("div", "friend-alias-editor");
-      const aliasInput = el("input"); aliasInput.value = friend.hasAlias ? friend.alias || friend.name : ""; aliasInput.placeholder = publicName; aliasInput.setAttribute("aria-label", `${friend.name} 내가 부를 이름`);
-      aliasInput.addEventListener("input", () => updateNameValidity(aliasInput, "친구 별칭"));
-      const saveAlias = el("button", "text-button", "별칭 저장"); saveAlias.type = "button"; saveAlias.onclick = () => { if (updateNameValidity(aliasInput, "친구 별칭")) send({ type: "updateFriendAlias", friendId: friend.id, alias: aliasInput.value }); };
-      const resetAlias = el("button", "text-button", "공개 별명 사용"); resetAlias.type = "button"; resetAlias.hidden = !friend.hasAlias; resetAlias.setAttribute("aria-label", `${friend.name} 별칭을 지우고 ${publicName} 사용`); resetAlias.onclick = () => send({ type: "updateFriendAlias", friendId: friend.id, alias: null });
-      aliasEditor.append(aliasInput, saveAlias, resetAlias);
-      actions.append(block, remove); item.append(info, actions, aliasEditor); elements["friend-list"].append(item);
+      const edit = el("button", "text-button", "별칭 수정"); edit.type = "button"; edit.setAttribute("aria-expanded", editingFriendId === friend.id ? "true" : "false"); edit.setAttribute("aria-controls", `friend-alias-editor-${friend.id}`);
+      edit.onclick = () => {
+        if (editingFriendId === friend.id) return friendAliasInput?.focus?.();
+        closeProfileEditor(); closeFriendAddEditor(); closeFriendAliasEditor();
+        editingFriendId = friend.id; friendAliasDraft = friend.hasAlias ? friend.alias || friend.name : "";
+        renderFriends(); friendAliasInput?.focus?.();
+      };
+      friendEditButtons.set(friend.id, edit);
+      actions.append(block, remove, edit); item.append(info, actions);
+      if (editingFriendId === friend.id) {
+        const aliasEditor = el("div", "friend-alias-editor"); aliasEditor.setAttribute("id", `friend-alias-editor-${friend.id}`);
+        const aliasInput = el("input"); aliasInput.value = friendAliasDraft; aliasInput.placeholder = publicName; aliasInput.setAttribute("aria-label", `${friend.name} 내가 부를 이름`);
+        aliasInput.addEventListener("input", () => { friendAliasDraft = aliasInput.value; updateNameValidity(aliasInput, "친구 별칭"); });
+        friendAliasInput = aliasInput;
+        const saveAlias = el("button", "text-button", "저장"); saveAlias.type = "button"; saveAlias.disabled = pendingFriendAlias?.friendId === friend.id; saveAlias.onclick = () => { if (updateNameValidity(aliasInput, "친구 별칭")) { const operationId = nextOperationId(); pendingFriendAlias = { friendId: friend.id, operationId }; friendAliasDraft = aliasInput.value; send({ type: "updateFriendAlias", friendId: friend.id, alias: aliasInput.value, operationId }); renderFriends(); } };
+        const resetAlias = el("button", "text-button", "공개 별명 사용"); resetAlias.type = "button"; resetAlias.hidden = !friend.hasAlias; resetAlias.disabled = pendingFriendAlias?.friendId === friend.id; resetAlias.setAttribute("aria-label", `${friend.name} 별칭을 지우고 ${publicName} 사용`); resetAlias.onclick = () => { const operationId = nextOperationId(); pendingFriendAlias = { friendId: friend.id, operationId }; send({ type: "updateFriendAlias", friendId: friend.id, alias: null, operationId }); renderFriends(); };
+        const cancelAlias = el("button", "text-button", "취소"); cancelAlias.type = "button"; cancelAlias.onclick = () => { closeFriendAliasEditor(); renderFriends(); friendEditButtons.get(friend.id)?.focus?.(); };
+        aliasEditor.append(aliasInput, saveAlias, resetAlias, cancelAlias); item.append(aliasEditor);
+      }
+      elements["friend-list"].append(item);
     }
     elements["friend-empty"].hidden = model.friends.length > 0;
     elements["my-code"].textContent = model.me?.code || "------";
     elements["profile-current-name"].textContent = model.me?.name || "설정 전";
-    elements["profile-name"].value = model.me?.nameCustomized ? model.me.name : "";
+    elements["profile-edit-toggle"].setAttribute("aria-expanded", editingProfile ? "true" : "false");
+    elements["profile-form"].hidden = !editingProfile;
+    elements["profile-name"].value = editingProfile ? profileDraft : "";
+    if (editingProfile) updateNameValidity(elements["profile-name"], "공개 별명", true);
+    else { elements["profile-name"].setCustomValidity?.(""); elements["profile-name"].setAttribute("aria-invalid", "false"); }
+    elements["profile-save"].disabled = Boolean(pendingProfileOperationId);
+    elements["friend-add-toggle"].setAttribute("aria-expanded", friendAddOpen ? "true" : "false");
+    elements["friend-form"].hidden = !friendAddOpen;
+    elements["friend-code"].value = friendAddOpen ? friendCodeDraft : "";
+    elements["friend-alias"].value = friendAddOpen ? newFriendAliasDraft : "";
+    if (friendAddOpen) updateNameValidity(elements["friend-alias"], "친구 별칭");
+    else { elements["friend-alias"].setCustomValidity?.(""); elements["friend-alias"].setAttribute("aria-invalid", "false"); }
+    elements["friend-add-submit"].disabled = Boolean(pendingFriendAddOperationId);
   }
 
   function renderGroupFriendOptions() {
@@ -304,23 +351,57 @@
 
   for (const name of viewNames) elements[`tab-${name}`].onclick = () => showView(name);
   elements["detail-back"].onclick = () => showView("home", true);
+  elements["profile-edit-toggle"].onclick = () => {
+    if (editingProfile) return elements["profile-name"].focus?.();
+    closeFriendAliasEditor(); closeFriendAddEditor(); closeProfileEditor();
+    editingProfile = true; profileDraft = model.me?.nameCustomized ? model.me.name : "";
+    renderFriends(); elements["profile-name"].focus?.();
+  };
+  elements["profile-cancel"].onclick = () => { closeProfileEditor(); renderFriends(); elements["profile-edit-toggle"].focus?.(); };
+  elements["friend-add-toggle"].onclick = () => {
+    if (friendAddOpen) return elements["friend-code"].focus?.();
+    closeProfileEditor(); closeFriendAliasEditor(); closeFriendAddEditor();
+    friendAddOpen = true;
+    renderFriends(); elements["friend-code"].focus?.();
+  };
+  elements["friend-add-cancel"].onclick = () => { closeFriendAddEditor(); renderFriends(); elements["friend-add-toggle"].focus?.(); };
   elements["message-body"].addEventListener("input", () => { const count = codepointLength(elements["message-body"].value); elements.counter.textContent = `${count} / ${model.maxMessageLength}`; updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지"); });
   elements["group-name"].addEventListener("input", () => updateLengthValidity(elements["group-name"], 30, "모임 이름"));
-  elements["friend-alias"].addEventListener("input", () => updateNameValidity(elements["friend-alias"], "친구 별칭"));
-  elements["profile-name"].addEventListener("input", () => updateNameValidity(elements["profile-name"], "공개 별명", true));
-  elements["friend-code"].addEventListener("input", () => { elements["friend-code"].value = elements["friend-code"].value.toUpperCase().replace(/[^A-F0-9]/gu, "").slice(0, 6); });
-  elements["friend-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateNameValidity(elements["friend-alias"], "친구 별칭")) return; send({ type: "addFriend", code: elements["friend-code"].value, alias: elements["friend-alias"].value }); });
-  elements["profile-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateNameValidity(elements["profile-name"], "공개 별명", true)) return; send({ type: "updateProfileName", name: elements["profile-name"].value }); });
+  elements["friend-alias"].addEventListener("input", () => { newFriendAliasDraft = elements["friend-alias"].value; updateNameValidity(elements["friend-alias"], "친구 별칭"); });
+  elements["profile-name"].addEventListener("input", () => { profileDraft = elements["profile-name"].value; updateNameValidity(elements["profile-name"], "공개 별명", true); });
+  elements["friend-code"].addEventListener("input", () => { elements["friend-code"].value = elements["friend-code"].value.toUpperCase().replace(/[^A-F0-9]/gu, "").slice(0, 6); friendCodeDraft = elements["friend-code"].value; });
+  elements["friend-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateNameValidity(elements["friend-alias"], "친구 별칭")) return; const operationId = nextOperationId(); pendingFriendAddOperationId = operationId; friendCodeDraft = elements["friend-code"].value; newFriendAliasDraft = elements["friend-alias"].value; send({ type: "addFriend", code: friendCodeDraft, alias: newFriendAliasDraft, operationId }); renderFriends(); });
+  elements["profile-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateNameValidity(elements["profile-name"], "공개 별명", true)) return; const operationId = nextOperationId(); pendingProfileOperationId = operationId; profileDraft = elements["profile-name"].value; send({ type: "updateProfileName", name: profileDraft, operationId }); renderFriends(); });
   elements["message-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!selectedTarget || selectedTarget.type === "anonymous") return; if (!updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지")) return; send({ type: "sendMessage", targetType: selectedTarget.type, targetId: selectedTarget.id, body: elements["message-body"].value, stickerId: selectedStickerId, anonymous: elements["anonymous-toggle"].checked === true }); });
   elements["group-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateLengthValidity(elements["group-name"], 30, "모임 이름")) return; send({ type: "createGroup", name: elements["group-name"].value, memberIds: [...groupMemberIds] }); });
   elements["connect-google"].onclick = () => send({ type: "connectGoogle" }); elements.refresh.onclick = () => send({ type: "refresh" }); elements.close.onclick = () => bridge?.close?.();
   bridge?.onMessage?.((message) => {
     if (message?.type === "state") {
       removeArmedFriendId = null; deleteArmedGroupId = null; removeArmedMemberKey = null; leaveArmedGroupId = null;
+      let restoreControl = null;
+      if (pendingProfileOperationId === message.operationId && message.notice === "공개 별명을 바꿨어요.") { editingProfile = false; pendingProfileOperationId = null; profileDraft = ""; restoreControl = "profile"; }
+      if (pendingFriendAddOperationId === message.operationId && message.notice === "친구를 연결했어요.") { friendAddOpen = false; pendingFriendAddOperationId = null; friendCodeDraft = ""; newFriendAliasDraft = ""; restoreControl = "friend-add"; }
+      if (pendingFriendAlias && pendingFriendAlias.operationId === message.operationId && ["친구 별칭을 바꿨어요.", "공개 별명으로 되돌렸어요."].includes(message.notice)) {
+        const savedFriendId = pendingFriendAlias.friendId;
+        pendingFriendAlias = null;
+        if (editingFriendId === savedFriendId) { editingFriendId = null; friendAliasDraft = ""; restoreControl = `friend:${savedFriendId}`; }
+      }
       model = { groups: [], groupInvites: [], ...message.state }; render();
       if (message.notice) elements.status.textContent = message.notice;
       if (message.sentTo) { elements["message-body"].value = ""; elements["anonymous-toggle"].checked = false; selectedStickerId = null; renderStickers(); elements.counter.textContent = `0 / ${model.maxMessageLength}`; }
-    } else if (message?.type === "error") elements.status.textContent = message.message;
+      if (restoreControl === "profile") elements["profile-edit-toggle"].focus?.();
+      else if (restoreControl === "friend-add") elements["friend-add-toggle"].focus?.();
+      else if (restoreControl?.startsWith("friend:")) friendEditButtons.get(restoreControl.slice(7))?.focus?.();
+    } else if (message?.type === "error") {
+      if (pendingProfileOperationId === message.operationId) pendingProfileOperationId = null;
+      if (pendingFriendAddOperationId === message.operationId) pendingFriendAddOperationId = null;
+      if (pendingFriendAlias?.operationId === message.operationId) pendingFriendAlias = null;
+      elements.status.textContent = message.message;
+      renderFriends();
+      if (editingProfile) elements["profile-name"].focus?.();
+      else if (editingFriendId) friendAliasInput?.focus?.();
+      else if (friendAddOpen) elements["friend-code"].focus?.();
+    }
   });
 
   renderStickers(); render(); send({ type: "ready" });

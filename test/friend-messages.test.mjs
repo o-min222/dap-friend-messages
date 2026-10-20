@@ -225,6 +225,11 @@ test("동의 화면은 사용자 connect 요청 전에는 열지 않는다", asy
     await harness.actions.find((action) => action.id === "openPalette").callback();
     await harness.handler({ type: "ready" });
     assert.equal(harness.posted.at(-1).state.connection, "disconnected");
+    await harness.handler({ type: "updateProfileName", name: "구름", operationId: "op-disconnected" });
+    assert.deepEqual(
+      { type: harness.posted.at(-1).type, operationId: harness.posted.at(-1).operationId },
+      { type: "error", operationId: "op-disconnected" },
+    );
     assert.equal(harness.oauthCalls.connect.length, 0);
     assert.equal(harness.radial[0].actionId, "openPalette");
   } finally {
@@ -389,16 +394,27 @@ test("친구 등록·별칭 수정·공개 별명 변경 payload를 Edge 계약�
   try {
     await wait(10);
     await harness.actions.find((action) => action.id === "openPalette").callback();
-    await harness.handler({ type: "addFriend", code: "DEF456", alias: " 새 친구 " });
-    await harness.handler({ type: "updateFriendAlias", friendId: "f1", alias: " 산책친구 " });
-    await harness.handler({ type: "updateFriendAlias", friendId: "f1", alias: "" });
-    await harness.handler({ type: "updateProfileName", name: " 푸른 구름 " });
+    await harness.handler({ type: "addFriend", code: "DEF456", alias: " 새 친구 ", operationId: "op-add" });
+    await harness.handler({ type: "updateFriendAlias", friendId: "f1", alias: " 산책친구 ", operationId: "op-alias" });
+    await harness.handler({ type: "updateFriendAlias", friendId: "f1", alias: "", operationId: "op-reset" });
+    await harness.handler({ type: "updateProfileName", name: " 푸른 구름 ", operationId: "op-profile" });
+    await wait(30);
     const connect = requests.find((body) => body.action === "connect");
     assert.deepEqual({ friendCode: connect.friendCode, alias: connect.alias }, { friendCode: "DEF456", alias: "새 친구" });
     const aliases = requests.filter((body) => body.action === "updateFriendAlias");
     assert.deepEqual(aliases.map(({ friendId, alias }) => ({ friendId, alias })), [{ friendId: "f1", alias: "산책친구" }, { friendId: "f1", alias: null }]);
     const profile = requests.find((body) => body.action === "updateProfileName");
     assert.equal(profile.displayName, "푸른 구름");
+    assert.deepEqual(
+      harness.posted.filter((message) => message.operationId).map((message) => message.operationId),
+      ["op-add", "op-alias", "op-reset", "op-profile"],
+    );
+    await harness.handler({ type: "updateProfileName", name: "", operationId: "op-error" });
+    await wait(10);
+    assert.deepEqual(
+      { type: harness.posted.at(-1).type, operationId: harness.posted.at(-1).operationId },
+      { type: "error", operationId: "op-error" },
+    );
   } finally {
     await harness.cleanup();
   }
