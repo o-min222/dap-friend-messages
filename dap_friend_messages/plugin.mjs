@@ -1,0 +1,426 @@
+const EDGE_URL = "https://vowrjkctldqxizvleogd.supabase.co/functions/v1/friend-messages";
+const PUBLISHABLE_KEY = "sb_publishable_Dgxv-IINi9MZLWRYnQAuug_MmvlpXsl";
+const CONNECTION_ID = "google";
+const OAUTH_SCOPES = Object.freeze(["openid", "email", "profile"]);
+const POLL_INTERVAL_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 8_000;
+const MESSAGE_MAX_LENGTH = 100;
+const FRIEND_CODE_PATTERN = /^[A-F0-9]{6}$/u;
+const ALLOWED_ACTIONS = new Set(["state", "connect", "send", "open", "remove", "block", "unblock"]);
+
+function timeoutSignal(ms = REQUEST_TIMEOUT_MS) {
+  return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(ms)
+    : undefined;
+}
+
+function parseBody(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function apiError(status, payload) {
+  const detail = payload && typeof payload === "object"
+    ? payload.message || payload.error || payload.detail
+    : payload;
+  return detail ? String(detail).slice(0, 240) : `서버 요청에 실패했어요 (${status})`;
+}
+
+function expiryMillis(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value < 10_000_000_000 ? value * 1000 : value;
+  }
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function validateSession(payload) {
+  const source = payload?.session || payload;
+  const token = typeof source?.session_token === "string" ? source.session_token : "";
+  const expiresAt = expiryMillis(source?.expires_at);
+  if (!token || expiresAt <= Date.now()) throw new Error("메시지 세션을 발급받지 못했어요.");
+  return { token, expiresAt };
+}
+
+function validateFriendCode(value) {
+  const code = String(value || "").trim().toUpperCase();
+  if (!FRIEND_CODE_PATTERN.test(code)) throw new Error("친구 코드는 A–F와 숫자로 된 6자리예요.");
+  return code;
+}
+
+function validateMessage(value) {
+  const body = String(value || "").trim();
+  if (!body) throw new Error("보낼 내용을 입력해 주세요.");
+  if ([...body].length > MESSAGE_MAX_LENGTH) throw new Error("쪽지는 100자까지 보낼 수 있어요.");
+  return body;
+}
+
+function normalizeFriend(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const id = String(raw.friend_id || raw.id || "");
+  if (!id) return null;
+  const code = String(raw.friend_code || raw.code || "").toUpperCase();
+  return {
+    id,
+    name: String(raw.display_name || raw.name || "친구").slice(0, 40),
+    code: FRIEND_CODE_PATTERN.test(code) ? code : "",
+    blocked: raw.blocked === true || raw.status === "blocked",
+    unreadCount: Math.max(0, Number(raw.unread_count || 0)),
+  };
+}
+
+function normalizeMetadata(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const id = String(raw.message_id || raw.id || "");
+  if (!id) return null;
+  return {
+    id,
+    senderId: String(raw.sender_id || ""),
+    senderName: String(raw.sender_name || raw.display_name || "친구").slice(0, 40),
+    createdAt: String(raw.created_at || new Date().toISOString()),
+    openedAt: null,
+    expiresAt: null,
+    body: null,
+  };
+}
+
+function normalizeState(payload) {
+  const source = payload?.state || payload || {};
+  const profile = source.profile || source.me || source;
+  const ownCode = String(profile.friend_code || profile.code || "").toUpperCase();
+  const friends = Array.isArray(source.friends) ? source.friends : [];
+  const messages = Array.isArray(source.unopened_messages)
+    ? source.unopened_messages
+    : Array.isArray(source.messages) ? source.messages : [];
+  return {
+    me: {
+      name: String(profile.display_name || profile.name || "나").slice(0, 40),
+      code: FRIEND_CODE_PATTERN.test(ownCode) ? ownCode : "",
+    },
+    friends: friends.map(normalizeFriend).filter(Boolean),
+    messages: messages.map(normalizeMetadata).filter(Boolean),
+  };
+}
+
+function normalizeOpenedMessage(payload, fallback) {
+  const source = payload?.message || payload || {};
+  const body = String(source.body || source.message || "").slice(0, MESSAGE_MAX_LENGTH);
+  if (!body) throw new Error("쪽지 내용을 불러오지 못했어요.");
+  const expiresAt = expiryMillis(source.expires_at) || Date.now() + 5_000;
+  return {
+    ...fallback,
+    body,
+    openedAt: String(source.opened_at || new Date().toISOString()),
+    expiresAt,
+  };
+}
+
+function mergeServerState(currentMessages, payload, now = Date.now()) {
+  const next = normalizeState(payload);
+  const opened = currentMessages.filter((message) => (
+    message.openedAt && message.expiresAt > now
+  ));
+  const openedIds = new Set(opened.map((message) => message.id));
+  return {
+    ...next,
+    messages: [
+      ...opened,
+      ...next.messages.filter((message) => !openedIds.has(message.id)),
+    ],
+  };
+}
+
+function clientNonce() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
+export function activate(ctx) {
+  let palette = null;
+  let paletteOff = null;
+  let disposed = false;
+  let pollTimer = null;
+  let syncPromise = null;
+  let opaqueSession = null;
+  const expiryTimers = new Map();
+  const registrations = [];
+  const state = {
+    connection: "checking",
+    busy: false,
+    me: { name: "나", code: "" },
+    friends: [],
+    messages: [],
+    lastSyncedAt: null,
+    error: null,
+  };
+
+  const post = (message) => {
+    if (palette && (typeof palette.isDestroyed !== "function" || !palette.isDestroyed())) {
+      palette.postMessage(message);
+    }
+  };
+  const publicState = () => ({
+    ...state,
+    unreadCount: state.messages.filter((message) => !message.openedAt).length,
+    maxMessageLength: MESSAGE_MAX_LENGTH,
+  });
+  const pushState = (extra = {}) => post({ type: "state", state: publicState(), ...extra });
+
+  const edgeFetch = async (authorization, body) => {
+    const response = await fetch(EDGE_URL, {
+      method: "POST",
+      headers: {
+        apikey: PUBLISHABLE_KEY,
+        Authorization: `Bearer ${authorization}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: timeoutSignal(),
+    });
+    return { response, payload: parseBody(await response.text()) };
+  };
+
+  const exchangeSession = async () => {
+    const googleToken = await ctx.host.oauth.accessToken(CONNECTION_ID);
+    const { response, payload } = await edgeFetch(googleToken, { action: "session" });
+    if (!response.ok) throw new Error(apiError(response.status, payload));
+    opaqueSession = validateSession(payload);
+    return opaqueSession;
+  };
+
+  const ensureSession = async () => {
+    if (opaqueSession && opaqueSession.expiresAt > Date.now() + 15_000) return opaqueSession;
+    return exchangeSession();
+  };
+
+  const request = async (action, payload = {}, retry = true) => {
+    if (!ALLOWED_ACTIONS.has(action)) throw new Error("허용되지 않은 요청이에요.");
+    const session = await ensureSession();
+    const result = await edgeFetch(session.token, { action, ...payload });
+    if (result.response.status === 401 && retry) {
+      opaqueSession = null;
+      await exchangeSession();
+      return request(action, payload, false);
+    }
+    if (!result.response.ok) throw new Error(apiError(result.response.status, result.payload));
+    return result.payload;
+  };
+
+  const stopPolling = () => {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+  };
+  const startPolling = () => {
+    stopPolling();
+    if (disposed) return;
+    pollTimer = setInterval(() => void syncState(), POLL_INTERVAL_MS);
+    pollTimer.unref?.();
+  };
+
+  const applyServerState = (payload) => {
+    const next = mergeServerState(state.messages, payload);
+    state.me = next.me;
+    state.friends = next.friends;
+    state.messages = next.messages;
+  };
+
+  const syncState = ({ announce = false } = {}) => {
+    if (syncPromise || disposed || state.connection !== "connected") return syncPromise;
+    state.busy = true;
+    if (announce) state.error = null;
+    pushState();
+    syncPromise = (async () => {
+      try {
+        applyServerState(await request("state"));
+        state.lastSyncedAt = Date.now();
+        state.error = null;
+        if (announce) pushState({ notice: "새 쪽지를 확인했어요." });
+      } catch (error) {
+        state.error = error instanceof Error ? error.message : "쪽지를 불러오지 못했어요.";
+      } finally {
+        state.busy = false;
+        syncPromise = null;
+        pushState();
+      }
+    })();
+    return syncPromise;
+  };
+
+  const checkConnection = async () => {
+    state.connection = "checking";
+    pushState();
+    const status = await ctx.host.oauth.status(CONNECTION_ID);
+    if (disposed) return false;
+    if (!status.connected) {
+      state.connection = "disconnected";
+      opaqueSession = null;
+      stopPolling();
+      pushState();
+      return false;
+    }
+    state.connection = "connected";
+    state.error = null;
+    pushState();
+    startPolling();
+    await syncState();
+    return true;
+  };
+
+  const connectGoogle = async () => {
+    state.busy = true;
+    state.error = null;
+    pushState();
+    try {
+      const status = await ctx.host.oauth.connect({
+        provider: "google",
+        connectionId: CONNECTION_ID,
+        scopes: [...OAUTH_SCOPES],
+      });
+      if (disposed) return;
+      if (!status.connected) throw new Error(status.reason || "Google 계정을 연결하지 못했어요.");
+      state.connection = "connected";
+      opaqueSession = null;
+      startPolling();
+      await syncState();
+      pushState({ notice: "Google 계정을 연결했어요." });
+    } catch (error) {
+      state.connection = "disconnected";
+      state.error = error instanceof Error ? error.message : "Google 연결에 실패했어요.";
+      stopPolling();
+    } finally {
+      state.busy = false;
+      pushState();
+    }
+  };
+
+  const expireMessageAt = (messageId, expiresAt) => {
+    if (disposed) return;
+    if (expiryTimers.has(messageId)) clearTimeout(expiryTimers.get(messageId));
+    const delay = Math.max(0, expiresAt - Date.now());
+    const timer = setTimeout(() => {
+      expiryTimers.delete(messageId);
+      state.messages = state.messages.filter((message) => message.id !== messageId);
+      pushState({ expiredMessageId: messageId });
+    }, delay);
+    timer.unref?.();
+    expiryTimers.set(messageId, timer);
+  };
+
+  const mutateFriend = async (action, friendId) => {
+    const id = String(friendId || "");
+    if (!state.friends.some((friend) => friend.id === id)) throw new Error("친구를 다시 선택해 주세요.");
+    await request(action, { friend_id: id });
+    await syncState();
+    pushState({ notice: action === "remove" ? "친구를 삭제했어요." : action === "block" ? "친구를 차단했어요." : "차단을 해제했어요." });
+  };
+
+  const onPaletteMessage = async (message) => {
+    if (!message || typeof message !== "object" || disposed) return;
+    if (message.type === "ready") return pushState();
+    if (message.type === "connectGoogle") return connectGoogle();
+    if (message.type === "refresh") return syncState({ announce: true });
+    if (state.connection !== "connected") return post({ type: "error", message: "먼저 Google 계정을 연결해 주세요." });
+    try {
+      if (message.type === "addFriend") {
+        await request("connect", { friend_code: validateFriendCode(message.code) });
+        await syncState();
+        pushState({ notice: "친구를 연결했어요." });
+      } else if (message.type === "sendMessage") {
+        const recipientId = String(message.friendId || "");
+        const friend = state.friends.find((item) => item.id === recipientId);
+        if (!friend || friend.blocked) throw new Error("쪽지를 보낼 친구를 다시 선택해 주세요.");
+        await request("send", {
+          recipient_id: recipientId,
+          body: validateMessage(message.body),
+          client_nonce: clientNonce(),
+        });
+        pushState({ notice: "쪽지를 보냈어요.", sentTo: recipientId });
+      } else if (message.type === "openMessage") {
+        const messageId = String(message.messageId || "");
+        const index = state.messages.findIndex((item) => item.id === messageId);
+        if (index < 0 || state.messages[index].openedAt) return;
+        const opened = normalizeOpenedMessage(await request("open", { message_id: messageId }), state.messages[index]);
+        state.messages[index] = opened;
+        pushState({ openedMessageId: messageId });
+        expireMessageAt(messageId, opened.expiresAt);
+      } else if (["removeFriend", "blockFriend", "unblockFriend"].includes(message.type)) {
+        const action = { removeFriend: "remove", blockFriend: "block", unblockFriend: "unblock" }[message.type];
+        await mutateFriend(action, message.friendId);
+      }
+    } catch (error) {
+      post({ type: "error", message: error instanceof Error ? error.message : "요청을 처리하지 못했어요." });
+    }
+  };
+
+  const openPalette = () => {
+    if (!palette || palette.isDestroyed()) {
+      palette = ctx.host.windows.openPalette({
+        page: "palette/index.html",
+        width: 440,
+        height: 690,
+        frame: false,
+        resizable: true,
+        minWidth: 390,
+        minHeight: 580,
+        alwaysOnTop: true,
+        visibleOnAllWorkspaces: true,
+        level: "pop-up-menu",
+      });
+      paletteOff?.();
+      paletteOff = palette.onMessage((message) => void onPaletteMessage(message));
+    }
+    palette.show();
+    palette.focus?.();
+    pushState();
+  };
+
+  registrations.push(ctx.actions.registerAction({ id: "openPalette", callback: openPalette }));
+  registrations.push(ctx.actions.registerAction({ id: "refreshInbox", callback: () => syncState({ announce: true }) }));
+  registrations.push(ctx.radialMenu.addItem({
+    itemId: "friend-messages",
+    label: "친구 쪽지",
+    actionId: "openPalette",
+    priority: 44,
+    icon: "assets/friend-messages.svg",
+  }));
+
+  void checkConnection().catch((error) => {
+    state.connection = "disconnected";
+    state.error = error instanceof Error ? error.message : "Google 연결 상태를 확인하지 못했어요.";
+    pushState();
+  });
+
+  return () => {
+    disposed = true;
+    stopPolling();
+    opaqueSession = null;
+    for (const timer of expiryTimers.values()) clearTimeout(timer);
+    expiryTimers.clear();
+    paletteOff?.();
+    palette?.close();
+    for (const registration of registrations) registration?.dispose?.();
+  };
+}
+
+export const __test = {
+  ALLOWED_ACTIONS,
+  EDGE_URL,
+  FRIEND_CODE_PATTERN,
+  MESSAGE_MAX_LENGTH,
+  OAUTH_SCOPES,
+  POLL_INTERVAL_MS,
+  PUBLISHABLE_KEY,
+  expiryMillis,
+  normalizeFriend,
+  normalizeMetadata,
+  normalizeOpenedMessage,
+  normalizeState,
+  mergeServerState,
+  validateFriendCode,
+  validateMessage,
+  validateSession,
+};

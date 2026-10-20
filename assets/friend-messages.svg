@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">친구 쪽지</title>
+  <desc id="desc">서로 겹친 두 개의 말풍선</desc>
+  <defs>
+    <linearGradient id="g" x1="10" y1="8" x2="54" y2="57" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A882F0"/>
+      <stop offset="1" stop-color="#6B49BA"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#FFF2E6"/>
+  <path d="M14 16h25a9 9 0 0 1 9 9v8a9 9 0 0 1-9 9H27l-9 7v-8.1A9 9 0 0 1 14 33V16Z" fill="url(#g)"/>
+  <path d="M29 25h21v8a9 9 0 0 1-9 9h-2v7l-9-7h-1a9 9 0 0 1-9-9v-1a9 9 0 0 1 9-7Z" fill="#FFBC8B" stroke="#FFF2E6" stroke-width="3"/>
+  <circle cx="31" cy="33.5" r="2" fill="#5D438E"/>
+  <circle cx="38" cy="33.5" r="2" fill="#5D438E"/>
+  <circle cx="45" cy="33.5" r="2" fill="#5D438E"/>
+</svg>
+
