@@ -48,7 +48,8 @@
 
         <section id="view-friends" class="view" hidden aria-labelledby="friends-title">
           <div class="view-heading"><div><p class="eyebrow">FRIENDS</p><h2 id="friends-title">친구 관리</h2></div><div class="my-code">내 코드 <strong id="my-code">------</strong></div></div>
-          <form id="friend-form" class="inline-form"><label class="sr-only" for="friend-code">친구 코드</label><input id="friend-code" maxlength="6" pattern="[A-Fa-f0-9]{6}" placeholder="친구 코드 6자리" required><button type="submit">추가</button></form>
+          <section class="profile-card" aria-labelledby="profile-name-title"><div><strong id="profile-name-title">내 공개 별명</strong><span>현재 <b id="profile-current-name">나</b></span></div><form id="profile-form"><label class="sr-only" for="profile-name">내 공개 별명</label><input id="profile-name" placeholder="친구에게 보일 별명" required><button type="submit">저장</button></form><p>Google 이름은 공개하지 않으며 이 별명만 친구에게 보입니다.</p></section>
+          <form id="friend-form" class="friend-connect-form"><label>친구 코드<input id="friend-code" maxlength="6" pattern="[A-Fa-f0-9]{6}" placeholder="A-F·숫자 6자리" required></label><label>내가 부를 이름 <span>(선택·내 화면 전용)</span><input id="friend-alias" placeholder="비우면 친구의 공개 별명 사용"></label><button type="submit">친구 추가</button></form>
           <ul id="friend-list" class="manage-list"></ul><p id="friend-empty" class="empty compact">연결된 친구가 없어요.</p>
         </section>
 
@@ -60,7 +61,7 @@
         </section>
       </div>
 
-      <footer><p id="status" class="status" role="status" aria-live="polite"></p><p class="privacy">TLS·저장 암호화 · E2EE 아님 · 익명 발신자 정보 서버 보관 · 본문 텔레메트리 미기록</p></footer>
+      <footer><p id="status" class="status" role="status" aria-live="polite"></p><p class="privacy">Google 이름 미공개 · TLS·저장 암호화 · E2EE 아님 · 익명 발신자 정보 서버 보관 · 본문 텔레메트리 미기록</p></footer>
     </main>
     <script src="../ui/friend-messages-ui.js"></script>
   </body>

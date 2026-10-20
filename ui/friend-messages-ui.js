@@ -7,7 +7,7 @@
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread",
     "invite-count", "message-stack", "inbox-empty", "message-form", "target-type", "target-select",
     "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-form", "friend-code",
-    "friend-list", "friend-empty", "invite-section", "invite-list", "group-form", "group-name",
+    "friend-alias", "profile-form", "profile-name", "profile-current-name", "friend-list", "friend-empty", "invite-section", "invite-list", "group-form", "group-name",
     "group-friend-options", "group-list", "group-empty",
     ...viewNames.flatMap((name) => [`tab-${name}`, `view-${name}`]),
   ];
@@ -28,11 +28,23 @@
 
   const send = (message) => bridge?.postMessage?.(message);
   const codepointLength = (value) => [...String(value || "")].length;
+  const nameForbiddenPattern = /[\p{Cc}\p{Cf}]/u;
   const updateLengthValidity = (input, max, label) => {
     const valid = codepointLength(input.value) <= max;
     input.setCustomValidity?.(valid ? "" : `${label}은 ${max}자까지 입력할 수 있어요.`);
     input.setAttribute("aria-invalid", valid ? "false" : "true");
     return valid;
+  };
+  const updateNameValidity = (input, label, required = false) => {
+    const value = String(input.value || "");
+    const message = nameForbiddenPattern.test(value)
+      ? `${label}에는 제어 문자를 사용할 수 없어요.`
+      : codepointLength(value.trim()) > 20
+        ? `${label}은 20자까지 입력할 수 있어요.`
+        : required && !value.trim() ? `${label}을 입력해 주세요.` : "";
+    input.setCustomValidity?.(message);
+    input.setAttribute("aria-invalid", message ? "true" : "false");
+    return !message;
   };
   const el = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -113,24 +125,54 @@
     placeholder.value = "";
     elements["target-select"].append(placeholder);
     for (const item of items) { const option = el("option", "", type === "group" ? `${item.name} · ${item.members.length}명` : item.name); option.value = item.id; elements["target-select"].append(option); }
-    if (items.some((item) => item.id === previous)) elements["target-select"].value = previous;
-    elements.send.disabled = !items.length || model.busy;
+    if (items.length === 1) elements["target-select"].value = items[0].id;
+    else if (items.some((item) => item.id === previous)) elements["target-select"].value = previous;
+    else elements["target-select"].value = "";
+    updateTargetState();
+  }
+
+  function updateTargetState(announce = false) {
+    const hasTargets = elements["target-select"].children.length > 1;
+    const selected = Boolean(elements["target-select"].value);
+    elements.send.disabled = model.busy || !hasTargets;
+    elements.send.setAttribute("aria-disabled", elements.send.disabled ? "true" : "false");
+    elements["target-select"].setAttribute("aria-invalid", "false");
+    if (announce && selected) elements.status.textContent = "받는 대상을 선택했어요.";
+    return selected;
+  }
+
+  function showTargetError(event) {
+    event?.preventDefault?.();
+    elements["target-select"].setAttribute("aria-invalid", "true");
+    elements.status.textContent = "받는 친구/모임을 선택해 주세요.";
+    elements["target-select"].focus?.();
   }
 
   function renderFriends() {
     elements["friend-list"].replaceChildren();
     for (const friend of model.friends) {
-      const item = el("li", "manage-item");
-      const info = el("span", "manage-info"); info.append(el("strong", "", friend.name), el("small", "", friend.blocked ? "차단됨" : friend.code || "친구"));
+      const publicName = friend.publicName || friend.name || "친구";
+      const item = el("li", "manage-item friend-item");
+      const info = el("span", "manage-info");
+      const detail = friend.hasAlias ? `공개 별명 ${publicName}` : "친구의 공개 별명";
+      info.append(el("strong", "", friend.name), el("small", "", friend.blocked ? `${detail} · 차단됨` : detail));
       const actions = el("span", "row-actions");
       const block = el("button", "text-button", friend.blocked ? "차단 해제" : "차단"); block.type = "button"; block.onclick = () => send({ type: friend.blocked ? "unblockFriend" : "blockFriend", friendId: friend.id });
       const armed = removeArmedFriendId === friend.id;
       const remove = el("button", "text-button danger", armed ? "삭제 확정" : "삭제"); remove.type = "button"; remove.setAttribute("aria-label", armed ? `${friend.name} 삭제 확정` : `${friend.name} 삭제 확인`);
       remove.onclick = () => { if (!armed) { removeArmedFriendId = friend.id; renderFriends(); } else { removeArmedFriendId = null; send({ type: "removeFriend", friendId: friend.id }); renderFriends(); } };
-      actions.append(block, remove); item.append(info, actions); elements["friend-list"].append(item);
+      const aliasEditor = el("div", "friend-alias-editor");
+      const aliasInput = el("input"); aliasInput.value = friend.hasAlias ? friend.alias || friend.name : ""; aliasInput.placeholder = publicName; aliasInput.setAttribute("aria-label", `${friend.name} 내가 부를 이름`);
+      aliasInput.addEventListener("input", () => updateNameValidity(aliasInput, "친구 별칭"));
+      const saveAlias = el("button", "text-button", "별칭 저장"); saveAlias.type = "button"; saveAlias.onclick = () => { if (updateNameValidity(aliasInput, "친구 별칭")) send({ type: "updateFriendAlias", friendId: friend.id, alias: aliasInput.value }); };
+      const resetAlias = el("button", "text-button", "공개 별명 사용"); resetAlias.type = "button"; resetAlias.hidden = !friend.hasAlias; resetAlias.setAttribute("aria-label", `${friend.name} 별칭을 지우고 ${publicName} 사용`); resetAlias.onclick = () => send({ type: "updateFriendAlias", friendId: friend.id, alias: null });
+      aliasEditor.append(aliasInput, saveAlias, resetAlias);
+      actions.append(block, remove); item.append(info, actions, aliasEditor); elements["friend-list"].append(item);
     }
     elements["friend-empty"].hidden = model.friends.length > 0;
     elements["my-code"].textContent = model.me?.code || "------";
+    elements["profile-current-name"].textContent = model.me?.name || "설정 전";
+    elements["profile-name"].value = model.me?.nameCustomized ? model.me.name : "";
   }
 
   function renderGroupFriendOptions() {
@@ -246,11 +288,16 @@
 
   for (const name of viewNames) elements[`tab-${name}`].onclick = () => showView(name);
   elements["target-type"].onchange = renderTargets;
+  elements["target-select"].onchange = () => updateTargetState(true);
+  elements["target-select"].addEventListener("invalid", showTargetError);
   elements["message-body"].addEventListener("input", () => { const count = codepointLength(elements["message-body"].value); elements.counter.textContent = `${count} / ${model.maxMessageLength}`; updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지"); });
   elements["group-name"].addEventListener("input", () => updateLengthValidity(elements["group-name"], 30, "모임 이름"));
+  elements["friend-alias"].addEventListener("input", () => updateNameValidity(elements["friend-alias"], "친구 별칭"));
+  elements["profile-name"].addEventListener("input", () => updateNameValidity(elements["profile-name"], "공개 별명", true));
   elements["friend-code"].addEventListener("input", () => { elements["friend-code"].value = elements["friend-code"].value.toUpperCase().replace(/[^A-F0-9]/gu, "").slice(0, 6); });
-  elements["friend-form"].addEventListener("submit", (event) => { event.preventDefault(); send({ type: "addFriend", code: elements["friend-code"].value }); });
-  elements["message-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지")) return; const targetType = elements["target-type"].value === "group" ? "group" : "friend"; send({ type: "sendMessage", targetType, targetId: elements["target-select"].value, body: elements["message-body"].value, stickerId: selectedStickerId, anonymous: elements["anonymous-toggle"].checked === true }); });
+  elements["friend-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateNameValidity(elements["friend-alias"], "친구 별칭")) return; send({ type: "addFriend", code: elements["friend-code"].value, alias: elements["friend-alias"].value }); });
+  elements["profile-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateNameValidity(elements["profile-name"], "공개 별명", true)) return; send({ type: "updateProfileName", name: elements["profile-name"].value }); });
+  elements["message-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateTargetState()) return showTargetError(); if (!updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지")) return; const targetType = elements["target-type"].value === "group" ? "group" : "friend"; send({ type: "sendMessage", targetType, targetId: elements["target-select"].value, body: elements["message-body"].value, stickerId: selectedStickerId, anonymous: elements["anonymous-toggle"].checked === true }); });
   elements["group-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!updateLengthValidity(elements["group-name"], 30, "모임 이름")) return; send({ type: "createGroup", name: elements["group-name"].value, memberIds: [...groupMemberIds] }); });
   elements["connect-google"].onclick = () => send({ type: "connectGoogle" }); elements.refresh.onclick = () => send({ type: "refresh" }); elements.close.onclick = () => bridge?.close?.();
   bridge?.onMessage?.((message) => { if (message?.type === "state") { removeArmedFriendId = null; deleteArmedGroupId = null; removeArmedMemberKey = null; leaveArmedGroupId = null; model = { groups: [], groupInvites: [], ...message.state }; render(); if (message.notice) elements.status.textContent = message.notice; if (message.sentTo) { elements["message-body"].value = ""; elements["anonymous-toggle"].checked = false; selectedStickerId = null; renderStickers(); elements.counter.textContent = `0 / ${model.maxMessageLength}`; } } else if (message?.type === "error") elements.status.textContent = message.message; });
