@@ -1,6 +1,6 @@
 id: dap.friend_messages
 name: Friend Messages
-version: 0.8.0
+version: 0.9.0
 manifest_version: 2
 entry: dap_friend_messages.plugin:activate
 description: 친구 코드로 연결하고 짧은 쪽지를 주고받습니다.

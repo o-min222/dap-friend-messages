@@ -21,7 +21,7 @@ for (const path of required) assert.ok((await stat(resolve(root, path))).isFile(
 const manifest = await readFile(resolve(root, "plugin.yaml"), "utf8");
 for (const line of [
   "id: dap.friend_messages",
-  "version: 0.8.0",
+  "version: 0.9.0",
   "entry: dap_friend_messages.plugin:activate",
   "min_app_version: 1.4.0",
   "  - window.palette",
@@ -29,7 +29,7 @@ for (const line of [
 ]) assert.ok(manifest.includes(line), `plugin.yaml에 '${line}'이 필요합니다.`);
 assert.doesNotMatch(manifest, /storage\.private/u, "메모리 세션만 사용하므로 storage.private 권한이 없어야 합니다.");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-assert.equal(packageJson.version, "0.8.0", "plugin.yaml과 package.json 버전이 같아야 합니다.");
+assert.equal(packageJson.version, "0.9.0", "plugin.yaml과 package.json 버전이 같아야 합니다.");
 
 const entry = await readFile(resolve(root, "dap_friend_messages/plugin.mjs"), "utf8");
 assert.doesNotMatch(entry, /^\s*import\s+.+from\s+["'][^./]/mu, "plugin.mjs에는 bare import를 사용할 수 없습니다.");
@@ -64,25 +64,29 @@ assert.match(html, /id="view-manage"[^>]*aria-labelledby="manage-title"/u);
 assert.doesNotMatch(html, /id="tab-(?:friends|groups)"|id="view-(?:friends|groups)"/u, "친구와 모임은 하나의 관리 탭에 있어야 합니다.");
 assert.match(html, /id="home-title" tabindex="-1">쪽지/u, "쪽지 목록 focus fallback 대상이 있어야 합니다.");
 assert.match(html, /id="message-list"[^>]*aria-live="polite"[^>]*aria-relevant="additions removals"[^>]*aria-atomic="false"/u, "쪽지 목록은 반복 전체 낭독을 줄이는 live-region 설정이어야 합니다.");
-assert.match(html, /친구 관리/u);
-assert.match(html, /모임 관리/u);
+assert.match(html, /id="manage-title" tabindex="-1">관리/u);
+assert.match(html, /id="friends-title" tabindex="-1">친구/u);
+assert.match(html, /id="groups-title" tabindex="-1">모임/u);
 assert.match(html, /익명으로 보내기/u);
 assert.match(html, /받는 사람에게만 익명이며, 운영상 발신자 정보는 서버에 보관됩니다/u);
 assert.match(html, /내가 부를 이름/u);
 assert.match(html, /Google 이름은 공개하지 않으며 이 별명만 친구에게 보입니다/u);
 assert.match(html, /id="manage-dialog"[^>]*role="dialog"[^>]*aria-modal="true"/u, "관리 입력은 modal dialog에 있어야 합니다.");
 assert.match(html, /id="invite-panel" hidden/u, "받은 초대 응답은 dialog 상세에서 처리해야 합니다.");
-assert.match(html, /id="friend-add-trigger"[^>]*aria-label="친구 추가"[^>]*title="친구 추가"/u);
-assert.match(html, /id="group-add-trigger"[^>]*aria-label="새 모임 만들기"[^>]*title="새 모임 만들기"/u);
+assert.match(html, /id="manage-menu-trigger"[^>]*aria-label="관리 메뉴"[^>]*title="관리 메뉴"/u);
+assert.match(html, /id="menu-panel" hidden[\s\S]*id="menu-profile"[\s\S]*id="menu-friend-add"[\s\S]*id="menu-group-add"/u, "프로필·친구 추가·모임 생성은 관리 메뉴 안에 있어야 합니다.");
 assert.match(html, /id="compose-panel"[^>]*hidden/u, "보내기는 관리 dialog 안에서 시작해야 합니다.");
 assert.match(html, /id="group-message"[^>]*>모임 전체에 쪽지 보내기/u);
 const manageView = html.match(/<section id="view-manage"[\s\S]*?<\/section>\s*<\/div>\s*<div id="manage-dialog-backdrop"/u)?.[0] || "";
 assert.doesNotMatch(manageView.replace(/<div id="manage-dialog-backdrop"[\s\S]*/u, ""), /<(?:input|select|textarea)\b/u, "관리 목록 바깥에는 입력 필드가 없어야 합니다.");
+assert.equal(manageView.match(/<button\b/gu)?.length, 1, "관리 첫 화면에는 관리 메뉴 외 action control이 없어야 합니다.");
+assert.doesNotMatch(manageView, /profile-row|friend-add-trigger|group-add-trigger|invite-section|invite-list/u, "관리 첫 화면에는 프로필·추가·초대 별도 block이 없어야 합니다.");
 assert.doesNotMatch(html, /type="file"|업로드/u, "스티커 업로드 UI를 제공하면 안 됩니다.");
 assert.doesNotMatch(html, /<textarea[^>]*maxlength=|id="group-name"[^>]*maxlength=/u, "Unicode codepoint 검증 필드에 maxlength를 사용하면 안 됩니다.");
 assert.doesNotMatch(html, /id="(?:friend-alias|profile-name)"[^>]*maxlength=/u, "이름 필드는 maxlength 대신 Unicode codepoint 검증을 사용해야 합니다.");
 
 const css = await readFile(resolve(root, "ui/friend-messages.css"), "utf8");
+assert.match(css, /@media\(prefers-color-scheme:dark\)\{[^}]*--accent:#a68bd3[^}]*\}\.primary-button\{color:#191817\}\.primary-button:disabled\{opacity:1;background:#6f657b;color:#f5f0e8\}/u, "dark primary button은 기본·disabled 상태 모두 4.5:1 이상 대비여야 합니다.");
 assert.match(css, /\.tabs\{grid-template-columns:repeat\(2,1fr\)\}/u, "상단 navigation은 2탭이어야 합니다.");
 assert.match(css, /\.view\{overflow-x:hidden\}/u, "380px에서 가로 overflow가 없어야 합니다.");
 assert.match(css, /\.composer-bar\{[^}]*grid-template-columns:44px minmax\(0,1fr\) 44px 44px/su, "380px compact composer가 가로로 넘치면 안 됩니다.");
@@ -91,7 +95,7 @@ assert.match(css, /\.app-header\s*\{[^}]*-webkit-app-region:\s*drag/su, "상단 
 assert.match(css, /\.header-actions\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "헤더 버튼은 클릭 가능해야 합니다.");
 assert.match(css, /\.icon-button\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "개별 헤더 버튼도 이동 영역에서 제외해야 합니다.");
 assert.match(css, /\.app\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/su, "좁은 창에서도 목록과 배지가 가로로 잘리지 않아야 합니다.");
-assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.management-icon-action:hover\{background:#40354f;color:var\(--ink\)\}\.manage-avatar\{background:#40354f;color:var\(--ink\)\}\}/u, "dark mode 관리 아이콘은 4.5:1 이상 대비 색을 사용해야 합니다.");
+assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.management-icon-action:hover,\.manage-row:hover\{background:#40354f;color:var\(--ink\)\}\.manage-avatar\{background:#40354f;color:var\(--ink\)\}\}/u, "dark mode 관리 아이콘은 4.5:1 이상 대비 색을 사용해야 합니다.");
 
 const ui = await readFile(resolve(root, "ui/friend-messages-ui.js"), "utf8");
 assert.doesNotMatch(ui, /\bfetch\s*\(/u, "네트워크 요청은 main-side에서만 해야 합니다.");
@@ -127,6 +131,8 @@ assert.match(ui, /document\.activeElement/u, "dialog는 Tab 초점 순환을 관
 assert.match(ui, /pendingDialogOperation\?\.operationId === message\.operationId/u, "편집기는 일치하는 요청 응답에만 반응해야 합니다.");
 assert.doesNotMatch(ui, /for \(const \[accept, label\][\s\S]*respondGroupInvite/u, "받은 초대 목록에 inline 수락·거절 버튼을 만들면 안 됩니다.");
 assert.match(ui, /kind: "invite-response", operationId/u, "초대 응답은 operationId pending lock을 사용해야 합니다.");
+assert.match(ui, /let manageRecords = new Map\(\)/u, "관리 목록 polling은 keyed DOM record를 재사용해야 합니다.");
+assert.match(ui, /const inviteRows = model\.groupInvites\.map[\s\S]*placeRows\(elements\["group-list"\], \[\.\.\.inviteRows, \.\.\.groupRows\]\)/u, "받은 초대는 모임 목록 행에 합쳐야 합니다.");
 assert.match(entry, /sentTo: `\$\{targetType\}:\$\{targetId\}`, \.\.\.operationMeta/u, "send 성공은 operationId를 palette에 되돌려줘야 합니다.");
 assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.composer-icon\.selected,\.thread-avatar\{background:#40354f;color:var\(--ink\)\}/u, "dark mode 아이콘은 4.5:1 이상 대비 색을 사용해야 합니다.");
 
