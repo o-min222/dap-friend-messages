@@ -6,10 +6,10 @@
   const ids = [
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread", "home-title",
     "invite-count", "message-list", "inbox-empty", "message-form", "composer-hint", "compose-recipient", "compose-back",
-    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "manage-title", "friends-title", "groups-title", "manage-menu-trigger", "my-code", "friend-form", "friend-code",
-    "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-form", "profile-name", "profile-current-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
+    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "manage-title", "manage-menu-trigger", "profile-row", "profile-current-name", "my-code", "manage-tab-friends", "manage-tab-groups", "group-invite-count", "friends-panel", "groups-panel", "friend-form", "friend-code",
+    "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-form", "profile-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
     "group-form", "group-name", "group-friend-options", "group-create-submit", "group-create-cancel", "group-list", "group-empty",
-    "manage-dialog-backdrop", "manage-dialog", "manage-dialog-title", "manage-dialog-back", "manage-dialog-close", "menu-panel", "menu-profile", "menu-friend-add", "menu-group-add", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel",
+    "manage-dialog-backdrop", "manage-dialog", "manage-dialog-title", "manage-dialog-back", "manage-dialog-close", "menu-panel", "menu-friend-add", "menu-group-add", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel",
     "friend-detail-name", "friend-detail-status", "friend-message", "friend-alias-form", "friend-detail-alias", "friend-alias-save", "friend-alias-reset", "friend-block", "friend-remove",
     "group-detail-name", "group-detail-status", "group-message", "group-rename-form", "group-rename-name", "group-rename-save", "group-invite-controls", "group-invite-select", "group-invite-button", "group-member-list", "group-leave", "group-delete",
     "invite-panel", "invite-detail-name", "invite-detail-status", "invite-accept", "invite-decline", "compose-panel",
@@ -23,6 +23,7 @@
   const stickerMap = Object.fromEntries(stickerPresets.map(([id, emoji, label]) => [id, { emoji, label }]));
   let model = { connection: "checking", busy: false, me: {}, friends: [], groups: [], groupInvites: [], messages: [], maxMessageLength: 100 };
   let activeView = "home";
+  let activeManageSection = "friends";
   let selectedTarget = null;
   let selectedStickerId = null;
   let anonymousSelected = false;
@@ -131,9 +132,20 @@
     activeView = name;
     for (const view of viewNames) {
       elements[`view-${view}`].hidden = view !== name;
-      elements[`tab-${view}`].className = `tab${view === name ? " active" : ""}`;
+      elements[`tab-${view}`].className = `bottom-nav-item${view === name ? " active" : ""}`;
       elements[`tab-${view}`].setAttribute("aria-current", view === name ? "page" : "false");
     }
+  }
+
+  function showManageSection(name, focusTab = false) {
+    if (!["friends", "groups"].includes(name)) return;
+    activeManageSection = name;
+    for (const section of ["friends", "groups"]) {
+      const selected = section === name; const tab = elements[`manage-tab-${section}`];
+      tab.setAttribute("aria-selected", selected ? "true" : "false"); tab.tabIndex = selected ? 0 : -1;
+      elements[`${section}-panel`].hidden = !selected;
+    }
+    if (focusTab) elements[`manage-tab-${name}`].focus?.();
   }
   const messageLabel = (message) => {
     if (message.anonymous && message.targetType !== "group") return "익명의 친구";
@@ -222,9 +234,9 @@
     }
   }
 
-  const triggerFor = (key) => key === "manage-menu" ? elements["manage-menu-trigger"] : manageRecords.get(key)?.button;
-  const fallbackForTrigger = (key) => key?.startsWith("friend:") ? elements["friends-title"]
-    : key?.startsWith("group:") || key?.startsWith("invite:") ? elements["groups-title"]
+  const triggerFor = (key) => key === "manage-menu" ? elements["manage-menu-trigger"] : key === "profile" ? elements["profile-row"] : manageRecords.get(key)?.button;
+  const fallbackForTrigger = (key) => key?.startsWith("friend:") ? elements["manage-tab-friends"]
+    : key?.startsWith("group:") || key?.startsWith("invite:") ? elements["manage-tab-groups"]
       : elements["manage-menu-trigger"] || elements["manage-title"];
 
   function closeManageDialog(restoreFocus = true) {
@@ -258,15 +270,13 @@
     if (!dialogKind) return;
     elements["manage-dialog-backdrop"].hidden = false;
     for (const id of ["menu-panel", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel", "invite-panel", "compose-panel"]) elements[id].hidden = true;
-    const menuChild = dialogTriggerKey === "manage-menu" && ["profile", "friend-add", "group-create"].includes(dialogKind);
+    const menuChild = dialogTriggerKey === "manage-menu" && ["friend-add", "group-create"].includes(dialogKind);
     elements["manage-dialog-back"].hidden = !menuChild;
     let firstFocus = elements["manage-dialog-title"];
     if (dialogKind === "menu") {
       elements["menu-panel"].hidden = false; elements["manage-dialog-title"].textContent = "관리 메뉴";
-      elements["profile-current-name"].textContent = model.me?.name || "설정 전";
-      elements["my-code"].textContent = model.me?.code || "------";
-      setDialogFocusables([elements["menu-profile"], elements["menu-friend-add"], elements["menu-group-add"]]);
-      firstFocus = menuReturnFocusId ? elements[menuReturnFocusId] : elements["menu-profile"];
+      setDialogFocusables([elements["menu-friend-add"], elements["menu-group-add"]]);
+      firstFocus = menuReturnFocusId ? elements[menuReturnFocusId] : elements["menu-friend-add"];
     } else if (dialogKind === "profile") {
       elements["profile-panel"].hidden = false; elements["manage-dialog-title"].textContent = "내 프로필";
       if (initial) elements["profile-name"].value = model.me?.nameCustomized ? model.me.name : "";
@@ -381,6 +391,7 @@
     const focusedEntry = [...manageRecords].find(([, record]) => record.button === document.activeElement);
     const focusedKey = focusedEntry?.[0] || ""; const focusedList = focusedEntry?.[1].item.parentNode;
     const focusedIndex = focusedList ? [...focusedList.children].indexOf(focusedEntry[1].item) : -1;
+    elements["profile-current-name"].textContent = model.me?.name || "설정 전"; elements["my-code"].textContent = model.me?.code || "------";
     const friendRows = model.friends.map((friend) => {
       const publicName = friend.publicName || friend.name || "친구"; const detail = `${friend.hasAlias ? `공개 별명 ${publicName}` : "친구의 공개 별명"}${friend.blocked ? " · 차단됨" : ""}`;
       const key = `friend:${friend.id}`;
@@ -398,13 +409,13 @@
     const placeRows = (list, descriptors) => descriptors.forEach((descriptor, index) => { const item = manageRecords.get(descriptor.key).item; if (list.children[index] !== item) list.insertBefore(item, list.children[index] || null); });
     placeRows(elements["friend-list"], friendRows); placeRows(elements["group-list"], [...inviteRows, ...groupRows]);
     elements["friend-empty"].hidden = friendRows.length > 0; elements["group-empty"].hidden = inviteRows.length + groupRows.length > 0;
-    elements["invite-count"].textContent = String(inviteRows.length); elements["invite-count"].hidden = inviteRows.length === 0;
+    for (const badge of [elements["invite-count"], elements["group-invite-count"]]) { badge.textContent = String(inviteRows.length); badge.hidden = inviteRows.length === 0; }
     if (dialogKind) renderManageDialog(false);
     else if (focusedKey && manageRecords.has(focusedKey) && document.activeElement !== manageRecords.get(focusedKey).button) manageRecords.get(focusedKey).button.focus?.();
     else if (focusedKey && !manageRecords.has(focusedKey)) {
       const rows = focusedList === elements["friend-list"] ? friendRows : [...inviteRows, ...groupRows];
       const fallback = rows[focusedIndex] || rows[focusedIndex - 1];
-      (fallback ? manageRecords.get(fallback.key)?.button : focusedList === elements["friend-list"] ? elements["friends-title"] : elements["groups-title"])?.focus?.();
+      (fallback ? manageRecords.get(fallback.key)?.button : focusedList === elements["friend-list"] ? elements["manage-tab-friends"] : elements["manage-tab-groups"])?.focus?.();
     }
   }
 
@@ -414,15 +425,23 @@
     elements["connect-panel"].hidden = connected; elements.workspace.hidden = !connected; elements.refresh.hidden = !connected;
     elements["connect-google"].disabled = model.busy || model.connection === "checking";
     if (!connected) { elements.status.textContent = model.error || (model.connection === "checking" ? "Google 연결 상태를 확인하고 있어요." : "Google 연결이 필요해요."); return; }
-    renderInbox(renderMeta); renderManagement();
+    renderInbox(renderMeta); renderManagement(); showManageSection(activeManageSection);
     elements["nav-unread"].textContent = String(model.unreadCount || 0); elements["nav-unread"].hidden = !model.unreadCount;
     showView(activeView);
     elements.status.textContent = model.error ? `연결 오류: ${model.error}` : model.busy ? "새 쪽지를 확인하는 중…" : model.lastSyncedAt ? `${timeLabel(model.lastSyncedAt)}에 확인했어요.` : "쪽지함을 준비하고 있어요.";
   }
 
   for (const name of viewNames) elements[`tab-${name}`].onclick = () => showView(name);
+  for (const section of ["friends", "groups"]) elements[`manage-tab-${section}`].onclick = () => showManageSection(section, true);
+  for (const section of ["friends", "groups"]) elements[`manage-tab-${section}`].addEventListener("keydown", (event) => {
+    const sections = ["friends", "groups"]; const currentIndex = sections.indexOf(activeManageSection);
+    const next = event.key === "Home" ? sections[0] : event.key === "End" ? sections.at(-1)
+      : event.key === "ArrowLeft" ? sections[(currentIndex - 1 + sections.length) % sections.length]
+        : event.key === "ArrowRight" ? sections[(currentIndex + 1) % sections.length] : "";
+    if (next) { event.preventDefault?.(); showManageSection(next, true); }
+  });
+  elements["profile-row"].onclick = () => openManageDialog("profile", "", "profile");
   elements["manage-menu-trigger"].onclick = () => openManageDialog("menu", "", "manage-menu");
-  elements["menu-profile"].onclick = () => openMenuChild("profile", "menu-profile");
   elements["menu-friend-add"].onclick = () => openMenuChild("friend-add", "menu-friend-add");
   elements["menu-group-add"].onclick = () => openMenuChild("group-create", "menu-group-add");
   elements["manage-dialog-back"].onclick = returnToManageMenu;
