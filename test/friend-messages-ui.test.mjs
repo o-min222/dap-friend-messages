@@ -16,6 +16,7 @@ class FakeElement {
   removeChild(child, detachFocus = true) { const index = this.children.indexOf(child); if (index >= 0) this.children.splice(index, 1); child.parentNode = null; if (detachFocus && child.contains(this.ownerDocument?.activeElement)) { this.ownerDocument.activeElement.focused = false; this.ownerDocument.activeElement = null; } }
   replaceChildren(...children) { for (const child of [...this.children]) this.removeChild(child); for (const child of children) this.append(child); }
   remove() { this.parentNode?.removeChild(this); }
+  select() { this.selected = true; this.focus(); }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   setCustomValidity(message) { this.validationMessage = message; }
   addEventListener(type, listener) { this.listeners[type] = listener; }
@@ -30,31 +31,35 @@ const relativeLuminance = (hex) => {
 const contrastRatio = (first, second) => { const values = [relativeLuminance(first), relativeLuminance(second)].sort((left, right) => right - left); return (values[0] + 0.05) / (values[1] + 0.05); };
 let harnessSequence = 0;
 
-async function harness() {
+async function harness(options = {}) {
   const views = ["home", "manage"];
   const ids = [
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread", "home-title",
     "invite-count", "message-list", "inbox-empty", "message-form", "composer-hint", "compose-recipient", "compose-back",
-    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "manage-title", "manage-menu-trigger", "profile-row", "profile-current-name", "my-code", "manage-tab-friends", "manage-tab-groups", "group-invite-count", "friends-panel", "groups-panel", "friend-form", "friend-code",
+    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "manage-title", "manage-menu-trigger", "profile-row", "profile-current-name", "profile-view", "profile-display-name", "profile-code-value", "profile-code-copy", "profile-copy-status", "profile-edit", "manage-tab-friends", "manage-tab-groups", "group-invite-count", "friends-panel", "groups-panel", "friend-form", "friend-code",
     "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-form", "profile-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
     "group-form", "group-name", "group-friend-options", "group-create-submit", "group-create-cancel", "group-list", "group-empty",
     "manage-dialog-backdrop", "manage-dialog", "manage-dialog-title", "manage-dialog-back", "manage-dialog-close", "menu-panel", "menu-friend-add", "menu-group-add", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel", "compose-panel",
-    "friend-detail-name", "friend-detail-status", "friend-message", "friend-alias-form", "friend-detail-alias", "friend-alias-save", "friend-alias-reset", "friend-block", "friend-remove",
+    "friend-detail-name", "friend-detail-status", "friend-message", "friend-alias-edit", "friend-alias-form", "friend-detail-alias", "friend-alias-save", "friend-alias-reset", "friend-alias-cancel", "friend-block", "friend-remove",
     "group-detail-name", "group-detail-status", "group-message", "group-rename-form", "group-rename-name", "group-rename-save", "group-invite-controls", "group-invite-select", "group-invite-button", "group-member-list", "group-leave", "group-delete",
     "invite-panel", "invite-detail-name", "invite-detail-status", "invite-accept", "invite-decline",
     ...views.flatMap((name) => [`tab-${name}`, `view-${name}`]),
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
   const sent = [];
+  const copied = [];
   let onMessage;
   const session = (++harnessSequence).toString(16).padStart(12, "0");
   const crypto = { randomUUID() { return `${session.slice(0, 8)}-${session.slice(8)}-4000-8000-000000000000`; } };
   const window = { dapPalette: { postMessage(message) { sent.push(message); }, onMessage(handler) { onMessage = handler; }, close() {} } };
-  const document = { activeElement: null, getElementById(id) { return elements[id]; }, createElement(tag) { const node = new FakeElement(tag); node.ownerDocument = document; return node; } };
+  const body = new FakeElement("body");
+  const document = { body, activeElement: null, getElementById(id) { return elements[id]; }, createElement(tag) { const node = new FakeElement(tag); node.ownerDocument = document; return node; }, execCommand(command) { if (command !== "copy" || options.fallbackFailure) return false; copied.push("fallback"); return true; } };
   for (const element of Object.values(elements)) element.ownerDocument = document;
+  body.ownerDocument = document;
+  const navigator = { clipboard: { async writeText(value) { if (options.clipboardFailure) throw new Error("clipboard failed"); copied.push(value); } } };
   const source = await readFile(new URL("../ui/friend-messages-ui.js", import.meta.url), "utf8");
-  vm.runInNewContext(source, { window, document, Intl, Date, Set, crypto });
-  return { elements, sent, onMessage, document };
+  vm.runInNewContext(source, { window, document, navigator, Intl, Date, Set, crypto });
+  return { elements, sent, copied, onMessage, document };
 }
 
 const state = () => ({
@@ -219,13 +224,25 @@ test("HTML은 하단 내비게이션·프로필 우선 친구 화면과 380px �
   assert.ok(manageStart < navStart); assert.doesNotMatch(html, /<nav class="tabs"/u); assert.match(bottomNav, /id="tab-home"[^>]*aria-label="쪽지"[^>]*title="쪽지"[\s\S]*bottom-nav-icon" aria-hidden="true"[\s\S]*<svg[^>]*focusable="false"[\s\S]*id="tab-manage"[^>]*aria-label="친구"[^>]*title="친구"[\s\S]*bottom-nav-icon" aria-hidden="true"[\s\S]*<svg[^>]*focusable="false"/u);
   assert.doesNotMatch(bottomNav, /bottom-nav-label|>\s*(?:쪽지|친구)\s*</u, "아이콘 전용 nav에는 보이는 label text가 없어야 한다"); assert.match(bottomNav, /id="nav-unread" class="badge"[\s\S]*id="invite-count" class="badge"/u);
   assert.match(manage, /id="manage-title"[^>]*>친구<\/h2>[\s\S]*id="manage-menu-trigger"[^>]*aria-label="관리 메뉴"/u);
-  assert.ok(manage.indexOf('id="profile-row"') < manage.indexOf('role="tablist"')); assert.match(manage, /id="profile-row"(?![^>]*aria-label)[\s\S]*내 프로필 · 눌러서 수정[\s\S]*id="my-code"/u);
+  assert.ok(manage.indexOf('id="profile-row"') < manage.indexOf('role="tablist"')); assert.match(manage, /id="profile-row"(?![^>]*aria-label)[\s\S]*class="sr-only">내 프로필<[\s\S]*id="profile-current-name"/u); assert.doesNotMatch(manage, /눌러서 수정|내 코드/u);
   assert.match(manage, /role="tablist"[^>]*aria-label="친구와 모임"[\s\S]*id="manage-tab-friends"[^>]*role="tab"[^>]*aria-selected="true"[\s\S]*id="manage-tab-groups"[^>]*role="tab"[^>]*aria-selected="false"/u);
+  assert.equal(manage.match(/class="manage-segment-icon" aria-hidden="true"><svg[^>]*focusable="false"/gu)?.length, 2); assert.match(manage, /id="manage-tab-friends"[\s\S]*<span>친구<\/span>[\s\S]*id="manage-tab-groups"[\s\S]*<span>모임<\/span>[\s\S]*id="group-invite-count" class="badge"/u);
   assert.match(manage, /id="friends-panel"[^>]*role="tabpanel"[\s\S]*id="groups-panel"[^>]*role="tabpanel"[^>]*hidden/u); assert.doesNotMatch(manage, /friend-add-trigger|group-add-trigger|invite-section|invite-list|<(?:input|select|textarea|form)\b/u);
   assert.match(html, /id="menu-panel" hidden[\s\S]*id="menu-friend-add"[\s\S]*id="menu-group-add"/u); assert.doesNotMatch(html, /id="menu-profile"/u);
+  assert.match(html, /id="profile-view"[\s\S]*id="profile-code-value"[^>]*translate="no"[\s\S]*id="profile-code-copy"[\s\S]*id="profile-copy-status"[^>]*aria-live="polite"[\s\S]*id="profile-edit"[^>]*>이름 수정<[\s\S]*id="profile-form"[^>]*hidden[\s\S]*<label>내 이름/u); assert.match(html, /id="friend-alias-edit"[\s\S]*id="friend-alias-form"[^>]*hidden[\s\S]*id="friend-alias-reset"[^>]*>친구가 정한 이름 사용<[\s\S]*id="friend-alias-cancel"/u);
+  assert.doesNotMatch(html, /<small>공개 별명<|Google 이름은 공개하지 않으며|비워서 저장하거나|공개 이름 사용/u);
   assert.match(css, /\.bottom-nav-item\{[^}]*min-height:52px/su); assert.match(css, /env\(safe-area-inset-bottom\)/u); assert.match(css, /\.bottom-nav-icon\{[^}]*width:44px[^}]*height:36px[^}]*border-radius:18px/su); assert.match(css, /\.bottom-nav-item\.active::before\{background:#7357a5\}/u); assert.match(css, /\.bottom-nav-item\.active \.bottom-nav-icon\{background:#eee6f7;color:#563d82\}/u); assert.match(css, /\.bottom-nav-item:focus-visible\{outline:3px solid #b8514e/u); assert.match(css, /\.bottom-nav-item>\.badge\{[^}]*left:calc\(50% \+ 13px\)/su); assert.match(css, /\.composer-bar\{[^}]*grid-template-columns:44px minmax\(0,1fr\) 44px 44px/su); assert.match(css, /@media\(max-width:395px\)/u); assert.doesNotMatch(css, /transition:\s*all/u);
   for (const [foreground, background] of [["#7d746a", "#fffdf8"], ["#7357a5", "#f4edfa"], ["#563d82", "#eee6f7"], ["#563d82", "#e1d3ef"], ["#7357a5", "#fffdf8"], ["#aaa095", "#292724"], ["#ddcef5", "#40354f"], ["#ddcef5", "#4b3e5e"], ["#a68bd3", "#292724"], ["#b8514e", "#fffdf8"], ["#e17a76", "#292724"]]) assert.ok(contrastRatio(foreground, background) >= 3);
-  assert.match(css, /\.manage-segments button\{[^}]*color:#62594f/su); assert.ok(contrastRatio("#62594f", "#e9e0d3") >= 4.5);
+  assert.match(css, /\.manage-segments\{[^}]*display:inline-flex[^}]*width:max-content[^}]*max-width:100%[^}]*gap:2px[^}]*margin-bottom:7px/su); assert.match(css, /\.manage-segments button\{[^}]*flex:0 0 70px[^}]*width:70px[^}]*min-height:44px[^}]*gap:4px[^}]*color:#62594f/su); assert.match(css, /\.manage-segments button:last-child\{flex-basis:78px;width:78px/su); assert.match(css, /\.manage-segments \.badge\{position:absolute;top:3px;right:3px/su);
+  assert.match(css, /\.manage-segment-icon svg\{[^}]*width:16px[^}]*stroke-width:1\.8/su); assert.match(css, /button\[aria-selected="true"\] \.manage-segment-icon svg\{stroke-width:2\.4\}/u); assert.match(css, /button\[aria-selected="true"\]\{background:#fffdf8;color:#342f2a;font-weight:800/su);
+  for (const [foreground, background] of [["#62594f", "#e9e0d3"], ["#7357a5", "#f4edfa"], ["#342f2a", "#fffdf8"], ["#aaa095", "#201e1c"], ["#ddcef5", "#362f40"], ["#f5f0e8", "#40354f"], ["#b8514e", "#fffdf8"], ["#e17a76", "#292724"]]) assert.ok(contrastRatio(foreground, background) >= 3);
+});
+
+test("초대가 두 자리를 넘어도 모임 탭 badge와 capsule 폭 계약을 유지한다", async () => {
+  const view = await harness(); const next = state(); const invite = next.groupInvites[0];
+  next.groupInvites = Array.from({ length: 123 }, (_, index) => ({ ...invite, id: `invite-${index}` }));
+  view.onMessage({ type: "state", state: next });
+  assert.equal(view.elements["group-invite-count"].textContent, "9+"); assert.equal(view.elements["invite-count"].textContent, "123");
 });
 
 test("dark primary button은 기본·disabled 상태 모두 읽기 쉬운 대비를 유지한다", async () => {
@@ -238,7 +255,7 @@ test("친구 화면은 친구 panel을 기본으로 열고 모임 tab에 초대 
   const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next }); view.elements["tab-manage"].onclick();
   assert.equal(view.elements["tab-home"].className, "bottom-nav-item"); assert.equal(view.elements["tab-home"].attributes["aria-current"], "false"); assert.equal(view.elements["tab-manage"].className, "bottom-nav-item active"); assert.equal(view.elements["tab-manage"].attributes["aria-current"], "page");
   assert.equal(view.elements["friends-panel"].hidden, false); assert.equal(view.elements["groups-panel"].hidden, true); assert.equal(view.elements["manage-tab-friends"].attributes["aria-selected"], "true");
-  assert.equal(view.elements["profile-current-name"].textContent, "구름"); assert.equal(view.elements["my-code"].textContent, "A1B2C3"); assert.equal(view.elements["invite-count"].textContent, "1"); assert.equal(view.elements["group-invite-count"].textContent, "1");
+  assert.equal(view.elements["profile-current-name"].textContent, "구름"); assert.equal(view.elements["invite-count"].textContent, "1"); assert.equal(view.elements["group-invite-count"].textContent, "1");
   let prevented = 0;
   view.elements["manage-tab-friends"].listeners.keydown({ key: "ArrowLeft", preventDefault() { prevented += 1; } }); assert.equal(view.elements["groups-panel"].hidden, false); assert.equal(view.document.activeElement, view.elements["manage-tab-groups"]);
   view.elements["manage-tab-groups"].listeners.keydown({ key: "ArrowRight", preventDefault() { prevented += 1; } }); assert.equal(view.elements["friends-panel"].hidden, false); assert.equal(view.document.activeElement, view.elements["manage-tab-friends"]);
@@ -252,10 +269,37 @@ test("친구 화면은 친구 panel을 기본으로 열고 모임 tab에 초대 
   view.onMessage({ type: "error", message: "실패", operationId: id }); assert.equal(view.elements["invite-panel"].hidden, false); assert.equal(view.elements["invite-accept"].disabled, false);
 });
 
-test("프로필 행은 직접 편집을 열고 관리 메뉴는 추가·생성만 전환한다", async () => {
+test("프로필 행은 조회를 먼저 열고 복사·편집 성공·focus 복원을 처리한다", async () => {
   const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next }); view.elements["tab-manage"].onclick();
-  view.elements["profile-row"].onclick(); assert.equal(view.elements["profile-panel"].hidden, false); assert.equal(view.elements["manage-dialog-back"].hidden, true); assert.equal(view.document.activeElement, view.elements["profile-name"]);
+  view.elements["profile-row"].onclick(); assert.equal(view.elements["profile-panel"].hidden, false); assert.equal(view.elements["profile-view"].hidden, false); assert.equal(view.elements["profile-form"].hidden, true); assert.equal(view.elements["profile-display-name"].textContent, "구름"); assert.equal(view.elements["profile-code-value"].textContent, "A1B2C3"); assert.equal(view.document.activeElement, view.elements["profile-code-copy"]);
+  await view.elements["profile-code-copy"].onclick(); assert.deepEqual(view.copied, ["A1B2C3"]); assert.equal(view.elements["profile-copy-status"].textContent, "친구 코드를 복사했어요.");
+  view.elements["profile-edit"].onclick(); assert.equal(view.elements["profile-view"].hidden, true); assert.equal(view.elements["profile-form"].hidden, false); assert.equal(view.document.activeElement, view.elements["profile-name"]);
+  view.elements["profile-name"].value = "취소할 별명"; view.elements["profile-cancel"].onclick(); assert.equal(view.elements["profile-form"].hidden, true); assert.equal(view.document.activeElement, view.elements["profile-edit"]);
+  view.elements["profile-edit"].onclick(); assert.equal(view.elements["profile-name"].value, "구름");
+  view.elements["profile-name"].value = "새 구름"; view.onMessage({ type: "state", state: next }); assert.equal(view.elements["profile-name"].value, "새 구름"); assert.equal(view.elements["profile-form"].hidden, false);
+  view.elements["profile-form"].listeners.submit({ preventDefault() {} }); const operationId = view.sent.at(-1).operationId; next.me = { ...next.me, name: "새 구름" }; view.onMessage({ type: "state", state: next, operationId, notice: "내 이름을 바꿨어요." });
+  assert.equal(view.elements["profile-form"].hidden, true); assert.equal(view.elements["profile-view"].hidden, false); assert.equal(view.elements["profile-display-name"].textContent, "새 구름"); assert.equal(view.document.activeElement, view.elements["profile-edit"]);
   view.elements["manage-dialog-close"].onclick(); assert.equal(view.document.activeElement, view.elements["profile-row"]);
+});
+
+test("코드 복사는 Clipboard 실패 시 fallback을 쓰고 모두 실패하면 직접 복사를 안내한다", async () => {
+  const fallback = await harness({ clipboardFailure: true }); fallback.onMessage({ type: "state", state: state() }); fallback.elements["tab-manage"].onclick(); fallback.elements["profile-row"].onclick(); await fallback.elements["profile-code-copy"].onclick(); assert.deepEqual(fallback.copied, ["fallback"]); assert.equal(fallback.elements["profile-copy-status"].textContent, "친구 코드를 복사했어요."); assert.equal(fallback.document.body.children.length, 0); assert.equal(fallback.document.activeElement, fallback.elements["profile-code-copy"]);
+  const failed = await harness({ clipboardFailure: true, fallbackFailure: true }); failed.onMessage({ type: "state", state: state() }); failed.elements["tab-manage"].onclick(); failed.elements["profile-row"].onclick(); await failed.elements["profile-code-copy"].onclick(); assert.match(failed.elements["profile-copy-status"].textContent, /복사하지 못했어요.*직접 복사/u); assert.equal(failed.document.body.children.length, 0); assert.equal(failed.document.activeElement, failed.elements["profile-code-copy"]);
+});
+
+test("친구 상세는 조회 우선이며 이름 편집 draft·오류·성공을 보존한다", async () => {
+  const view = await harness(); const next = state(); next.friends[0] = { ...next.friends[0], name: "하늘 별칭", alias: "하늘 별칭", hasAlias: true }; view.onMessage({ type: "state", state: next }); view.elements["tab-manage"].onclick();
+  assert.doesNotMatch(allText(view.elements["friend-list"]), /친구의 공개 별명|공개 이름 사용/u); view.elements["friend-list"].children[0].children[0].onclick(); assert.equal(view.elements["friend-alias-form"].hidden, true); assert.equal(view.elements["friend-detail-name"].textContent, "하늘 별칭"); assert.equal(view.elements["friend-detail-status"].textContent, "친구가 정한 이름 · 하늘"); assert.equal(view.document.activeElement, view.elements["friend-message"]);
+  view.elements["friend-alias-edit"].onclick(); assert.equal(view.elements["friend-alias-form"].hidden, false); assert.equal(view.document.activeElement, view.elements["friend-detail-alias"]); view.elements["friend-detail-alias"].value = "취소할 별칭"; view.elements["friend-alias-cancel"].onclick(); assert.equal(view.elements["friend-alias-form"].hidden, true); assert.equal(view.document.activeElement, view.elements["friend-alias-edit"]);
+  view.elements["friend-alias-edit"].onclick(); assert.equal(view.elements["friend-detail-alias"].value, "하늘 별칭"); view.elements["friend-detail-alias"].value = "새 별칭"; view.onMessage({ type: "state", state: next }); assert.equal(view.elements["friend-detail-alias"].value, "새 별칭");
+  view.elements["friend-alias-form"].listeners.submit({ preventDefault() {} }); const failedId = view.sent.at(-1).operationId; view.onMessage({ type: "error", message: "바꾸지 못했어요.", operationId: failedId }); assert.equal(view.elements["friend-alias-form"].hidden, false); assert.equal(view.elements["friend-detail-alias"].value, "새 별칭"); assert.equal(view.document.activeElement, view.elements["friend-detail-alias"]);
+  view.elements["friend-alias-form"].listeners.submit({ preventDefault() {} }); const successId = view.sent.at(-1).operationId; next.friends[0] = { ...next.friends[0], name: "새 별칭", alias: "새 별칭" }; view.onMessage({ type: "state", state: next, operationId: successId, notice: "별칭을 바꿨어요." }); assert.equal(view.elements["friend-alias-form"].hidden, true); assert.equal(view.elements["friend-detail-name"].textContent, "새 별칭"); assert.equal(view.document.activeElement, view.elements["friend-alias-edit"]);
+  view.elements["friend-alias-edit"].onclick(); view.elements["friend-alias-reset"].onclick(); const reset = view.sent.at(-1); assert.equal(reset.type, "updateFriendAlias"); assert.equal(reset.friendId, "f1"); assert.equal(reset.alias, null);
+  next.friends[0] = { ...next.friends[0], name: "하늘", alias: "", hasAlias: false }; view.onMessage({ type: "state", state: next, operationId: reset.operationId, notice: "친구가 정한 이름을 사용해요." }); assert.equal(view.elements["friend-alias-form"].hidden, true); assert.equal(view.elements["friend-detail-name"].textContent, "하늘"); assert.equal(view.elements["friend-detail-status"].textContent, ""); assert.equal(view.document.activeElement, view.elements["friend-alias-edit"]);
+});
+
+test("관리 메뉴는 친구 추가·모임 생성만 전환한다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next }); view.elements["tab-manage"].onclick();
   view.elements["manage-menu-trigger"].onclick();
   assert.equal(view.elements["menu-panel"].hidden, false); assert.equal(view.document.activeElement, view.elements["menu-friend-add"]);
   view.elements["menu-friend-add"].onclick(); assert.equal(view.elements["friend-add-panel"].hidden, false); assert.equal(view.elements["manage-dialog-back"].hidden, false); assert.equal(view.document.activeElement, view.elements["friend-code"]);
