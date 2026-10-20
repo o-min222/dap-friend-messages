@@ -5,7 +5,10 @@
 ## 기능
 
 - 사용자가 버튼을 누를 때만 Google 연결
+- Google OAuth는 계정 식별에 필요한 `openid` scope만 요청하며 email/profile scope는 요청하지 않음
 - A–F와 숫자로 된 6자리 친구 코드, 친구 차단·삭제
+- 친구를 연결할 때 내 화면 전용 별칭을 선택해 지정하고 언제든 공개 별명으로 되돌리기
+- Google 이름 대신 친구에게 보여 줄 20자 이내 공개 별명을 직접 설정
 - 친구 1명 또는 모임 전체에 쪽지 전송
 - 친구 또는 모임에 보낼 때 받는 사람에게 발신자를 숨기는 익명 전송
 - 본문 또는 내장 스티커 중 하나 이상, 본문 최대 100자
@@ -23,7 +26,9 @@ wire action 이름은 `dap_friend_messages/plugin.mjs`의 `BACKEND_ACTIONS` 한�
 | action | payload |
 | --- | --- |
 | `state` | 없음 |
-| `connect` | `friendCode` |
+| `connect` | `friendCode`, `alias` |
+| `updateFriendAlias` | `friendId`, `alias` (`null`이면 삭제) |
+| `updateProfileName` | `displayName` |
 | `sendMessage` | `targetType`, `targetId`, `body`, `stickerId`, `anonymous`, `clientNonce` |
 | `open` | `messageId` |
 | `remove` / `block` / `unblock` | `friendId` |
@@ -39,6 +44,8 @@ Endpoint: `https://vowrjkctldqxizvleogd.supabase.co/functions/v1/friend-messages
 ## 보안과 개인정보
 
 - Google refresh token은 DAP Host만 보관합니다.
+- Google OAuth에서는 backend의 계정 식별에 필요한 `openid` scope만 요청합니다.
+- Google 이름은 친구에게 공개하지 않고 사용자가 정한 공개 별명만 표시합니다. 친구에게 붙인 별칭은 내 화면에서만 사용합니다.
 - Edge opaque session은 플러그인 메모리에만 유지하고 palette에는 전달하지 않습니다.
 - 모든 네트워크 요청은 main-side에서만 수행합니다.
 - 전송은 TLS, 서버 데이터는 저장 암호화를 사용하지만 종단간 암호화(E2EE)는 아닙니다.

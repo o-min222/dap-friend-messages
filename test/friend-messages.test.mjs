@@ -15,9 +15,9 @@ test("polling interval은 한 곳에서만 만들고 재시작 전에 기존 tim
 test("최종 Edge endpoint와 공개 키, action allowlist를 고정한다", () => {
   assert.equal(__test.EDGE_URL, "https://vowrjkctldqxizvleogd.supabase.co/functions/v1/friend-messages");
   assert.equal(__test.PUBLISHABLE_KEY, "sb_publishable_Dgxv-IINi9MZLWRYnQAuug_MmvlpXsl");
-  assert.deepEqual([...__test.ALLOWED_ACTIONS], ["state", "connect", "open", "remove", "block", "unblock", "sendMessage", "createGroup", "updateGroup", "inviteGroup", "respondGroupInvite", "removeGroupMember", "leaveGroup", "deleteGroup"]);
+  assert.deepEqual([...__test.ALLOWED_ACTIONS], ["state", "connect", "updateFriendAlias", "updateProfileName", "open", "remove", "block", "unblock", "sendMessage", "createGroup", "updateGroup", "inviteGroup", "respondGroupInvite", "removeGroupMember", "leaveGroup", "deleteGroup"]);
   assert.deepEqual([...__test.STICKER_IDS], ["smile", "cheer", "love", "surprise", "sulk", "cry", "celebrate", "tired"]);
-  assert.deepEqual([...__test.OAUTH_SCOPES], ["openid", "email", "profile"]);
+  assert.deepEqual([...__test.OAUTH_SCOPES], ["openid"]);
   assert.ok(__test.POLL_INTERVAL_MS >= 5_000 && __test.POLL_INTERVAL_MS <= 15_000);
 });
 
@@ -30,6 +30,32 @@ test("친구 코드는 A-F/숫자 6자리, 쪽지는 100자로 제한한다", ()
   assert.throws(() => __test.validateMessage("가".repeat(101)), /100자/u);
   assert.deepEqual(__test.validateOutgoing("", "love"), { body: "", stickerId: "love" });
   assert.throws(() => __test.validateOutgoing("", ""), /내용이나 스티커/u);
+  assert.equal(__test.validateFriendAlias(` ${"😀".repeat(20)} `), "😀".repeat(20));
+  assert.equal(__test.validateFriendAlias("  "), null);
+  assert.throws(() => __test.validateFriendAlias("😀".repeat(21)), /20자/u);
+  assert.throws(() => __test.validateFriendAlias("친구\u200B별칭"), /제어 문자/u);
+  assert.throws(() => __test.validateFriendAlias("친구\n별칭"), /제어 문자/u);
+  assert.equal(__test.validateProfileName("🌿".repeat(20)), "🌿".repeat(20));
+  assert.throws(() => __test.validateProfileName("🌿".repeat(21)), /20자/u);
+  assert.throws(() => __test.validateProfileName("공개\u2060별명"), /제어 문자/u);
+  assert.throws(() => __test.validateProfileName("공개\t별명"), /제어 문자/u);
+  assert.throws(() => __test.validateProfileName(""), /입력/u);
+  assert.equal(__test.DISPLAY_NAME_MAX_LENGTH, 20);
+});
+
+test("친구의 내 별칭과 공개 별명, 내 공개 별명을 유연하게 정규화한다", () => {
+  const result = __test.normalizeState({
+    profile: { user_id: "me", display_name: "푸른 구름", name_customized: true, friend_code: "ABC123" },
+    friends: [
+      { friend_id: "f1", display_name: "산책친구", public_name: "하늘", has_alias: true, alias: "산책친구" },
+      { friend_id: "f2", display_name: "바다", public_name: "바다", has_alias: false, alias: null },
+      { friend_id: "f3", alias: "책친구", public_name: "나무" },
+    ],
+  });
+  assert.deepEqual(result.me, { id: "me", name: "푸른 구름", nameCustomized: true, code: "ABC123" });
+  assert.deepEqual({ name: result.friends[0].name, alias: result.friends[0].alias, publicName: result.friends[0].publicName, hasAlias: result.friends[0].hasAlias }, { name: "산책친구", alias: "산책친구", publicName: "하늘", hasAlias: true });
+  assert.deepEqual({ name: result.friends[1].name, alias: result.friends[1].alias, publicName: result.friends[1].publicName, hasAlias: result.friends[1].hasAlias }, { name: "바다", alias: "", publicName: "바다", hasAlias: false });
+  assert.deepEqual({ name: result.friends[2].name, alias: result.friends[2].alias, publicName: result.friends[2].publicName, hasAlias: result.friends[2].hasAlias }, { name: "책친구", alias: "책친구", publicName: "나무", hasAlias: true });
 });
 
 test("state의 열지 않은 쪽지는 메타데이터만 정규화하고 본문은 버린다", () => {
@@ -219,7 +245,7 @@ test("명시적 Google 연결 뒤 session 교환과 state 호출에 opaque Beare
     await harness.handler({ type: "connectGoogle" });
     await wait();
     assert.deepEqual(harness.oauthCalls.connect[0], {
-      provider: "google", connectionId: "google", scopes: ["openid", "email", "profile"],
+      provider: "google", connectionId: "google", scopes: ["openid"],
     });
     assert.equal(requests[0].url, __test.EDGE_URL);
     assert.equal(requests[0].options.headers.Authorization, "Bearer google-1");
@@ -254,6 +280,37 @@ test("401이면 Google 토큰으로 opaque 세션을 한 번만 다시 교환한
     assert.equal(sessions, 2);
     assert.equal(states, 2);
     assert.equal(harness.oauthCalls.accessToken, 2);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("친구 등록·별칭 수정·공개 별명 변경 payload를 Edge 계약으로 전달한다", async () => {
+  const requests = [];
+  const harness = pluginHarness({
+    connected: true,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      if (body.action === "session") return { ok: true, status: 200, async text() { return JSON.stringify({ session_token: "opaque", expires_at: Date.now() + 60_000 }); } };
+      if (body.action === "state") return { ok: true, status: 200, async text() { return JSON.stringify({ profile: { user_id: "me", display_name: "구름", name_customized: true, friend_code: "ABC123" }, friends: [{ friend_id: "f1", display_name: "하늘", public_name: "하늘", has_alias: false }], unopened_messages: [] }); } };
+      if (["connect", "updateFriendAlias", "updateProfileName"].includes(body.action)) return { ok: true, status: 200, async text() { return "{}"; } };
+      throw new Error(`unexpected ${body.action}`);
+    },
+  });
+  try {
+    await wait(10);
+    await harness.actions.find((action) => action.id === "openPalette").callback();
+    await harness.handler({ type: "addFriend", code: "DEF456", alias: " 새 친구 " });
+    await harness.handler({ type: "updateFriendAlias", friendId: "f1", alias: " 산책친구 " });
+    await harness.handler({ type: "updateFriendAlias", friendId: "f1", alias: "" });
+    await harness.handler({ type: "updateProfileName", name: " 푸른 구름 " });
+    const connect = requests.find((body) => body.action === "connect");
+    assert.deepEqual({ friendCode: connect.friendCode, alias: connect.alias }, { friendCode: "DEF456", alias: "새 친구" });
+    const aliases = requests.filter((body) => body.action === "updateFriendAlias");
+    assert.deepEqual(aliases.map(({ friendId, alias }) => ({ friendId, alias })), [{ friendId: "f1", alias: "산책친구" }, { friendId: "f1", alias: null }]);
+    const profile = requests.find((body) => body.action === "updateProfileName");
+    assert.equal(profile.displayName, "푸른 구름");
   } finally {
     await harness.cleanup();
   }

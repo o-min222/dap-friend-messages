@@ -1,16 +1,19 @@
 const EDGE_URL = "https://vowrjkctldqxizvleogd.supabase.co/functions/v1/friend-messages";
 const PUBLISHABLE_KEY = "sb_publishable_Dgxv-IINi9MZLWRYnQAuug_MmvlpXsl";
 const CONNECTION_ID = "google";
-const OAUTH_SCOPES = Object.freeze(["openid", "email", "profile"]);
+const OAUTH_SCOPES = Object.freeze(["openid"]);
 const POLL_INTERVAL_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 8_000;
 const MESSAGE_MAX_LENGTH = 100;
+const DISPLAY_NAME_MAX_LENGTH = 20;
+const NAME_FORBIDDEN_PATTERN = /[\p{Cc}\p{Cf}]/u;
 const GROUP_MAX_MEMBERS = 8;
 const FRIEND_CODE_PATTERN = /^[A-F0-9]{6}$/u;
 const STICKER_IDS = Object.freeze(["smile", "cheer", "love", "surprise", "sulk", "cry", "celebrate", "tired"]);
 // Edge 계약이 확정되면 값만 바꾸면 되도록 wire action을 한곳에 모은다.
 const BACKEND_ACTIONS = Object.freeze({
-  state: "state", connectFriend: "connect", openMessage: "open", removeFriend: "remove",
+  state: "state", connectFriend: "connect", updateFriendAlias: "updateFriendAlias",
+  updateProfileName: "updateProfileName", openMessage: "open", removeFriend: "remove",
   blockFriend: "block", unblockFriend: "unblock", sendMessage: "sendMessage",
   createGroup: "createGroup", updateGroup: "updateGroup", inviteGroup: "inviteGroup",
   respondGroupInvite: "respondGroupInvite", removeGroupMember: "removeGroupMember",
@@ -62,6 +65,23 @@ function validateFriendCode(value) {
   return code;
 }
 
+function validateFriendAlias(value) {
+  const raw = String(value || "");
+  if (NAME_FORBIDDEN_PATTERN.test(raw)) throw new Error("친구 별칭에는 제어 문자를 사용할 수 없어요.");
+  const alias = raw.trim();
+  if ([...alias].length > DISPLAY_NAME_MAX_LENGTH) throw new Error("친구 별칭은 20자까지 사용할 수 있어요.");
+  return alias || null;
+}
+
+function validateProfileName(value) {
+  const raw = String(value || "");
+  if (NAME_FORBIDDEN_PATTERN.test(raw)) throw new Error("공개 별명에는 제어 문자를 사용할 수 없어요.");
+  const name = raw.trim();
+  if (!name) throw new Error("친구에게 보여 줄 공개 별명을 입력해 주세요.");
+  if ([...name].length > DISPLAY_NAME_MAX_LENGTH) throw new Error("공개 별명은 20자까지 사용할 수 있어요.");
+  return name;
+}
+
 function validateMessage(value) {
   const body = String(value || "").trim();
   if (!body) throw new Error("보낼 내용을 입력해 주세요.");
@@ -95,9 +115,18 @@ function normalizeFriend(raw) {
   const id = String(raw.friend_id || raw.id || "");
   if (!id) return null;
   const code = String(raw.friend_code || raw.code || "").toUpperCase();
+  const explicitAlias = String(raw.alias || raw.friend_alias || raw.local_alias || "").trim();
+  const hasAlias = raw.has_alias === true || Boolean(explicitAlias);
+  const publicName = [...String(raw.public_name || raw.profile_name || (!hasAlias ? raw.display_name : "") || raw.name || "친구")]
+    .slice(0, DISPLAY_NAME_MAX_LENGTH).join("");
+  const name = [...String(explicitAlias || raw.display_name || publicName || "친구")]
+    .slice(0, DISPLAY_NAME_MAX_LENGTH).join("");
   return {
     id,
-    name: String(raw.display_name || raw.name || "친구").slice(0, 40),
+    name,
+    alias: hasAlias ? name : "",
+    publicName,
+    hasAlias,
     code: FRIEND_CODE_PATTERN.test(code) ? code : "",
     blocked: raw.blocked === true || raw.status === "blocked",
     unreadCount: Math.max(0, Number(raw.unread_count || 0)),
@@ -168,7 +197,8 @@ function normalizeState(payload) {
   return {
     me: {
       id: String(profile.user_id || profile.id || ""),
-      name: String(profile.display_name || profile.name || "나").slice(0, 40),
+      name: [...String(profile.display_name || profile.name || "나")].slice(0, DISPLAY_NAME_MAX_LENGTH).join(""),
+      nameCustomized: profile.name_customized === true,
       code: FRIEND_CODE_PATTERN.test(ownCode) ? ownCode : "",
     },
     friends: friends.map(normalizeFriend).filter(Boolean),
@@ -412,9 +442,23 @@ export function activate(ctx) {
     if (state.connection !== "connected") return post({ type: "error", message: "먼저 Google 계정을 연결해 주세요." });
     try {
       if (message.type === "addFriend") {
-        await request(BACKEND_ACTIONS.connectFriend, { friendCode: validateFriendCode(message.code) });
+        await request(BACKEND_ACTIONS.connectFriend, {
+          friendCode: validateFriendCode(message.code),
+          alias: validateFriendAlias(message.alias),
+        });
         await syncState();
         pushState({ notice: "친구를 연결했어요." });
+      } else if (message.type === "updateFriendAlias") {
+        const friendId = String(message.friendId || "");
+        if (!state.friends.some((friend) => friend.id === friendId)) throw new Error("친구를 다시 선택해 주세요.");
+        const alias = validateFriendAlias(message.alias);
+        await request(BACKEND_ACTIONS.updateFriendAlias, { friendId, alias });
+        await syncState();
+        pushState({ notice: alias ? "친구 별칭을 바꿨어요." : "공개 별명으로 되돌렸어요." });
+      } else if (message.type === "updateProfileName") {
+        await request(BACKEND_ACTIONS.updateProfileName, { displayName: validateProfileName(message.name) });
+        await syncState();
+        pushState({ notice: "공개 별명을 바꿨어요." });
       } else if (message.type === "sendMessage") {
         const targetType = message.targetType === "group" ? "group" : "friend";
         const targetId = String(message.targetId || "");
@@ -542,6 +586,8 @@ export const __test = {
   BACKEND_ACTIONS,
   EDGE_URL,
   FRIEND_CODE_PATTERN,
+  DISPLAY_NAME_MAX_LENGTH,
+  NAME_FORBIDDEN_PATTERN,
   MESSAGE_MAX_LENGTH,
   GROUP_MAX_MEMBERS,
   OAUTH_SCOPES,
@@ -556,8 +602,10 @@ export const __test = {
   normalizeState,
   mergeServerState,
   validateFriendCode,
+  validateFriendAlias,
   validateGroupName,
   validateMessage,
   validateOutgoing,
+  validateProfileName,
   validateSession,
 };
