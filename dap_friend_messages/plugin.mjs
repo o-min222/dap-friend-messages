@@ -527,7 +527,7 @@ export function activate(ctx) {
           anonymous: message.anonymous === true,
           clientNonce: clientNonce(),
         });
-        pushState({ notice: "쪽지를 보냈어요.", sentTo: `${targetType}:${targetId}` });
+        pushState({ notice: "쪽지를 보냈어요.", sentTo: `${targetType}:${targetId}`, ...operationMeta });
       } else if (message.type === "openMessage") {
         const messageId = String(message.messageId || "");
         const index = state.messages.findIndex((item) => item.id === messageId);

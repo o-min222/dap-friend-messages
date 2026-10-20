@@ -230,6 +230,11 @@ test("동의 화면은 사용자 connect 요청 전에는 열지 않는다", asy
       { type: harness.posted.at(-1).type, operationId: harness.posted.at(-1).operationId },
       { type: "error", operationId: "op-disconnected" },
     );
+    await harness.handler({ type: "sendMessage", targetType: "friend", targetId: "f1", body: "안녕", operationId: "op-send-disconnected" });
+    assert.deepEqual(
+      { type: harness.posted.at(-1).type, operationId: harness.posted.at(-1).operationId },
+      { type: "error", operationId: "op-send-disconnected" },
+    );
     assert.equal(harness.oauthCalls.connect.length, 0);
     assert.equal(harness.radial[0].actionId, "openPalette");
   } finally {
@@ -494,7 +499,7 @@ test("모임 쪽지는 targetType/targetId/stickerId/anonymous adapter 계약으
   try {
     await wait(10);
     await harness.actions.find((action) => action.id === "openPalette").callback();
-    harness.handler({ type: "sendMessage", targetType: "group", targetId: "g1", body: "", stickerId: "celebrate", anonymous: true });
+    harness.handler({ type: "sendMessage", targetType: "group", targetId: "g1", body: "", stickerId: "celebrate", anonymous: true, operationId: "op-send-group" });
     await wait(10);
     const sent = requests.find((body) => body.action === "sendMessage");
     assert.equal(sent.targetType, "group");
@@ -503,6 +508,12 @@ test("모임 쪽지는 targetType/targetId/stickerId/anonymous adapter 계약으
     assert.equal(sent.stickerId, "celebrate");
     assert.equal(sent.anonymous, true);
     assert.equal(typeof sent.clientNonce, "string");
+    assert.equal(harness.posted.find((message) => message.sentTo === "group:g1")?.operationId, "op-send-group");
+    await harness.handler({ type: "sendMessage", targetType: "group", targetId: "g1", body: "", stickerId: null, operationId: "op-send-error" });
+    assert.deepEqual(
+      { type: harness.posted.at(-1).type, operationId: harness.posted.at(-1).operationId },
+      { type: "error", operationId: "op-send-error" },
+    );
   } finally {
     await harness.cleanup();
   }

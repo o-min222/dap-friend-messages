@@ -21,7 +21,7 @@ for (const path of required) assert.ok((await stat(resolve(root, path))).isFile(
 const manifest = await readFile(resolve(root, "plugin.yaml"), "utf8");
 for (const line of [
   "id: dap.friend_messages",
-  "version: 0.6.0",
+  "version: 0.7.0",
   "entry: dap_friend_messages.plugin:activate",
   "min_app_version: 1.4.0",
   "  - window.palette",
@@ -29,7 +29,7 @@ for (const line of [
 ]) assert.ok(manifest.includes(line), `plugin.yaml에 '${line}'이 필요합니다.`);
 assert.doesNotMatch(manifest, /storage\.private/u, "메모리 세션만 사용하므로 storage.private 권한이 없어야 합니다.");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-assert.equal(packageJson.version, "0.6.0", "plugin.yaml과 package.json 버전이 같아야 합니다.");
+assert.equal(packageJson.version, "0.7.0", "plugin.yaml과 package.json 버전이 같아야 합니다.");
 
 const entry = await readFile(resolve(root, "dap_friend_messages/plugin.mjs"), "utf8");
 assert.doesNotMatch(entry, /^\s*import\s+.+from\s+["'][^./]/mu, "plugin.mjs에는 bare import를 사용할 수 없습니다.");
@@ -57,14 +57,12 @@ assert.match(html, /\.\.\/ui\/friend-messages-ui\.js/u);
 assert.match(html, /aria-live/u);
 assert.match(html, /E2EE 아님/u);
 assert.match(html, /본문 텔레메트리 미기록/u);
-assert.match(html, /id="friend-thread-list"/u);
-assert.match(html, /id="group-thread-list"/u);
-assert.match(html, /id="anonymous-thread-list"/u);
+assert.match(html, /id="thread-list"/u);
 assert.match(html, /id="view-detail"/u);
 assert.match(html, /id="tab-manage"[^>]*aria-controls="view-manage"/u);
 assert.match(html, /id="view-manage"[^>]*aria-labelledby="manage-title"/u);
 assert.doesNotMatch(html, /id="tab-(?:friends|groups)"|id="view-(?:friends|groups)"/u, "친구와 모임은 하나의 관리 탭에 있어야 합니다.");
-assert.match(html, /누구에게 쪽지를 보낼까요/u);
+assert.match(html, /id="home-title">쪽지/u);
 assert.match(html, /친구 관리/u);
 assert.match(html, /모임 관리/u);
 assert.match(html, /익명으로 보내기/u);
@@ -84,6 +82,8 @@ assert.doesNotMatch(html, /id="(?:friend-alias|profile-name)"[^>]*maxlength=/u, 
 const css = await readFile(resolve(root, "ui/friend-messages.css"), "utf8");
 assert.match(css, /\.tabs\{grid-template-columns:repeat\(2,1fr\)\}/u, "상단 navigation은 2탭이어야 합니다.");
 assert.match(css, /\.view\{overflow-x:hidden\}/u, "380px에서 가로 overflow가 없어야 합니다.");
+assert.match(css, /\.composer-bar\{[^}]*grid-template-columns:44px minmax\(0,1fr\) 44px 44px/su, "380px compact composer가 가로로 넘치면 안 됩니다.");
+assert.match(css, /overscroll-behavior:contain/u, "상세 timeline은 palette 밖으로 스크롤을 전파하면 안 됩니다.");
 assert.match(css, /\.app-header\s*\{[^}]*-webkit-app-region:\s*drag/su, "상단 헤더는 창 이동 영역이어야 합니다.");
 assert.match(css, /\.header-actions\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "헤더 버튼은 클릭 가능해야 합니다.");
 assert.match(css, /\.icon-button\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "개별 헤더 버튼도 이동 영역에서 제외해야 합니다.");
@@ -97,10 +97,17 @@ for (const sticker of ["smile", "cheer", "love", "surprise", "sulk", "cry", "cel
 assert.match(ui, /한 번 더 눌러 삭제/u, "모임 삭제는 inline 2단계 확인이어야 합니다.");
 assert.match(ui, /내보내기 확정/u, "멤버 내보내기는 inline 2단계 확인이어야 합니다.");
 assert.match(ui, /한 번 더 눌러 나가기/u, "모임 나가기는 inline 2단계 확인이어야 합니다.");
-assert.match(ui, /anonymous:\s*elements\["anonymous-toggle"\]\.checked === true/u, "익명 선택은 명시적인 boolean으로 전송해야 합니다.");
+assert.match(ui, /anonymous:\s*anonymousSelected === true/u, "익명 선택은 명시적인 boolean으로 전송해야 합니다.");
+assert.match(ui, /pendingSend = \{ targetKey: targetKey\(selectedTarget\), operationId, draftRevision, snapshot: draftSnapshot\(\) \}/u, "전송은 operationId와 대상·초안 identity를 잠가야 합니다.");
+assert.match(ui, /completedSend && message\.sentTo === completedSend\.targetKey && pendingMatchesDraft\(completedSend\)/u, "일치하는 전송 성공만 초안을 초기화해야 합니다.");
+assert.doesNotMatch(ui.match(/function renderDetail\(\)[\s\S]*?\n  \}/u)?.[0] || "", /resizeComposer/u, "polling render에서 textarea layout을 측정하면 안 됩니다.");
+assert.doesNotMatch(ui, /최근 쪽지 있음/u, "현재 state를 영구 기록처럼 표현하면 안 됩니다.");
 assert.match(ui, /selectedTarget\.type === "anonymous"/u, "익명 1:1 pseudo-thread에는 작성기를 노출하면 안 됩니다.");
 assert.match(ui, /message\.anonymous && message\.targetType !== "group"/u, "익명 1:1은 친구에게 귀속하지 않아야 합니다.");
 assert.match(ui, /message\.targetType === "group" && message\.targetId === target\.id/u, "익명 모임 쪽지는 groupId로만 귀속해야 합니다.");
+assert.match(ui, /targets\.sort\([\s\S]*Number\(unreadFor\(right\.target\) > 0\) - Number\(unreadFor\(left\.target\) > 0\)[\s\S]*newest\(right\.target\) - newest\(left\.target\)/u, "통합 목록은 미열람 여부와 최신 쪽지 순으로 정렬해야 합니다.");
+assert.doesNotMatch(html, /PAPER CONTACTS|friend-thread-list|group-thread-list|anonymous-thread-list/u, "홈에는 분리된 연락처 섹션을 두면 안 됩니다.");
+assert.doesNotMatch(css, /transition:\s*all/u, "전체 속성 transition을 사용하면 안 됩니다.");
 assert.match(entry, /senderId:\s*anonymous \? ""/u, "익명 쪽지 senderId는 main에서 마스킹해야 합니다.");
 assert.match(entry, /senderName:\s*anonymous \? "익명의 친구"/u, "익명 쪽지 senderName은 main에서 마스킹해야 합니다.");
 assert.match(entry, /targetType === "group" \? String\(raw\.group_id \|\| raw\.target_id \|\| ""\) : ""/u, "익명 direct의 raw target_id는 버려야 합니다.");
@@ -114,6 +121,8 @@ assert.match(ui, /document\.activeElement/u, "dialog는 Tab 초점 순환을 관
 assert.match(ui, /pendingDialogOperation\?\.operationId === message\.operationId/u, "편집기는 일치하는 요청 응답에만 반응해야 합니다.");
 assert.doesNotMatch(ui, /for \(const \[accept, label\][\s\S]*respondGroupInvite/u, "받은 초대 목록에 inline 수락·거절 버튼을 만들면 안 됩니다.");
 assert.match(ui, /kind: "invite-response", operationId/u, "초대 응답은 operationId pending lock을 사용해야 합니다.");
+assert.match(entry, /sentTo: `\$\{targetType\}:\$\{targetId\}`, \.\.\.operationMeta/u, "send 성공은 operationId를 palette에 되돌려줘야 합니다.");
+assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.composer-icon\.selected,\.thread-avatar\{background:#40354f;color:var\(--ink\)\}/u, "dark mode thread avatar는 4.5:1 이상 대비 색을 사용해야 합니다.");
 
 await import(resolve(root, "dap_friend_messages/plugin.mjs"));
 console.log(`DAP Friend Messages 검증 완료 (${required.length}개 배포 파일)`);
