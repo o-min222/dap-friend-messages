@@ -2,7 +2,7 @@
   "use strict";
 
   const bridge = window.dapPalette;
-  const viewNames = ["home", "friends", "groups"];
+  const viewNames = ["home", "manage"];
   const ids = [
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread",
     "invite-count", "anonymous-thread-section", "anonymous-thread-list", "friend-thread-list", "group-thread-list", "contact-empty", "view-detail", "detail-back",

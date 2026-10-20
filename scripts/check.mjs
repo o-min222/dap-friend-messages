@@ -21,13 +21,15 @@ for (const path of required) assert.ok((await stat(resolve(root, path))).isFile(
 const manifest = await readFile(resolve(root, "plugin.yaml"), "utf8");
 for (const line of [
   "id: dap.friend_messages",
-  "version: 0.5.0",
+  "version: 0.5.1",
   "entry: dap_friend_messages.plugin:activate",
   "min_app_version: 1.4.0",
   "  - window.palette",
   "  - oauth.connect",
 ]) assert.ok(manifest.includes(line), `plugin.yaml에 '${line}'이 필요합니다.`);
 assert.doesNotMatch(manifest, /storage\.private/u, "메모리 세션만 사용하므로 storage.private 권한이 없어야 합니다.");
+const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
+assert.equal(packageJson.version, "0.5.1", "plugin.yaml과 package.json 버전이 같아야 합니다.");
 
 const entry = await readFile(resolve(root, "dap_friend_messages/plugin.mjs"), "utf8");
 assert.doesNotMatch(entry, /^\s*import\s+.+from\s+["'][^./]/mu, "plugin.mjs에는 bare import를 사용할 수 없습니다.");
@@ -59,6 +61,9 @@ assert.match(html, /id="friend-thread-list"/u);
 assert.match(html, /id="group-thread-list"/u);
 assert.match(html, /id="anonymous-thread-list"/u);
 assert.match(html, /id="view-detail"/u);
+assert.match(html, /id="tab-manage"[^>]*aria-controls="view-manage"/u);
+assert.match(html, /id="view-manage"[^>]*aria-labelledby="manage-title"/u);
+assert.doesNotMatch(html, /id="tab-(?:friends|groups)"|id="view-(?:friends|groups)"/u, "친구와 모임은 하나의 관리 탭에 있어야 합니다.");
 assert.match(html, /누구에게 쪽지를 보낼까요/u);
 assert.match(html, /친구 관리/u);
 assert.match(html, /모임 관리/u);
@@ -71,6 +76,8 @@ assert.doesNotMatch(html, /<textarea[^>]*maxlength=|id="group-name"[^>]*maxlengt
 assert.doesNotMatch(html, /id="(?:friend-alias|profile-name)"[^>]*maxlength=/u, "이름 필드는 maxlength 대신 Unicode codepoint 검증을 사용해야 합니다.");
 
 const css = await readFile(resolve(root, "ui/friend-messages.css"), "utf8");
+assert.match(css, /\.tabs\{grid-template-columns:repeat\(2,1fr\)\}/u, "상단 navigation은 2탭이어야 합니다.");
+assert.match(css, /\.view\{overflow-x:hidden\}/u, "380px에서 가로 overflow가 없어야 합니다.");
 assert.match(css, /\.app-header\s*\{[^}]*-webkit-app-region:\s*drag/su, "상단 헤더는 창 이동 영역이어야 합니다.");
 assert.match(css, /\.header-actions\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "헤더 버튼은 클릭 가능해야 합니다.");
 assert.match(css, /\.icon-button\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "개별 헤더 버튼도 이동 영역에서 제외해야 합니다.");

@@ -23,8 +23,7 @@
       <div id="workspace" class="workspace" hidden>
         <nav class="tabs" aria-label="쪽지 메뉴">
           <button id="tab-home" class="tab active" type="button" aria-controls="view-home">쪽지 <span id="nav-unread" class="badge">0</span></button>
-          <button id="tab-friends" class="tab" type="button" aria-controls="view-friends">친구 관리</button>
-          <button id="tab-groups" class="tab" type="button" aria-controls="view-groups">모임 관리 <span id="invite-count" class="badge">0</span></button>
+          <button id="tab-manage" class="tab" type="button" aria-controls="view-manage">관리 <span id="invite-count" class="badge">0</span></button>
         </nav>
 
         <section id="view-home" class="view" aria-labelledby="home-title">
@@ -50,18 +49,21 @@
           </form>
         </section>
 
-        <section id="view-friends" class="view" hidden aria-labelledby="friends-title">
-          <div class="view-heading"><div><p class="eyebrow">FRIENDS</p><h2 id="friends-title">친구 관리</h2></div><div class="my-code">내 코드 <strong id="my-code">------</strong></div></div>
-          <section class="profile-card" aria-labelledby="profile-name-title"><div><strong id="profile-name-title">내 공개 별명</strong><span>현재 <b id="profile-current-name">나</b></span></div><form id="profile-form"><label class="sr-only" for="profile-name">내 공개 별명</label><input id="profile-name" placeholder="친구에게 보일 별명" required><button type="submit">저장</button></form><p>Google 이름은 공개하지 않으며 이 별명만 친구에게 보입니다.</p></section>
-          <form id="friend-form" class="friend-connect-form"><label>친구 코드<input id="friend-code" maxlength="6" pattern="[A-Fa-f0-9]{6}" placeholder="A-F·숫자 6자리" required></label><label>내가 부를 이름 <span>(선택·내 화면 전용)</span><input id="friend-alias" placeholder="비우면 친구의 공개 별명 사용"></label><button type="submit">친구 추가</button></form>
-          <ul id="friend-list" class="manage-list"></ul><p id="friend-empty" class="empty compact">연결된 친구가 없어요.</p>
-        </section>
+        <section id="view-manage" class="view" hidden aria-labelledby="manage-title">
+          <div class="view-heading"><div><p class="eyebrow">FRIENDS &amp; GROUPS</p><h2 id="manage-title">관리</h2></div></div>
+          <section class="management-section" aria-labelledby="friends-title">
+            <div class="management-heading"><h3 id="friends-title">친구 관리</h3><div class="my-code">내 코드 <strong id="my-code">------</strong></div></div>
+            <section class="profile-card" aria-labelledby="profile-name-title"><div><strong id="profile-name-title">내 공개 별명</strong><span>현재 <b id="profile-current-name">나</b></span></div><form id="profile-form"><label class="sr-only" for="profile-name">내 공개 별명</label><input id="profile-name" placeholder="친구에게 보일 별명" required><button type="submit">저장</button></form><p>Google 이름은 공개하지 않으며 이 별명만 친구에게 보입니다.</p></section>
+            <form id="friend-form" class="friend-connect-form"><label>친구 코드<input id="friend-code" maxlength="6" pattern="[A-Fa-f0-9]{6}" placeholder="A-F·숫자 6자리" required></label><label>내가 부를 이름 <span>(선택·내 화면 전용)</span><input id="friend-alias" placeholder="비우면 친구의 공개 별명 사용"></label><button type="submit">친구 추가</button></form>
+            <ul id="friend-list" class="manage-list"></ul><p id="friend-empty" class="empty compact">연결된 친구가 없어요.</p>
+          </section>
 
-        <section id="view-groups" class="view" hidden aria-labelledby="groups-title">
-          <div class="view-heading"><div><p class="eyebrow">GROUPS · MAX 8</p><h2 id="groups-title">모임 관리</h2></div></div>
-          <div id="invite-section" class="subsection"><h3>받은 초대</h3><ul id="invite-list" class="manage-list"></ul></div>
-          <details class="create-group"><summary>새 모임 만들기</summary><form id="group-form"><label>모임 이름<input id="group-name" required></label><fieldset><legend>함께할 친구 · 최대 7명</legend><div id="group-friend-options" class="check-grid"></div></fieldset><button class="primary-button" type="submit">모임 만들기</button></form></details>
-          <ul id="group-list" class="group-list"></ul><p id="group-empty" class="empty compact">참여 중인 모임이 없어요.</p>
+          <section class="management-section" aria-labelledby="groups-title">
+            <div class="management-heading"><div><p class="eyebrow">MAX 8</p><h3 id="groups-title">모임 관리</h3></div></div>
+            <div id="invite-section" class="subsection"><h4>받은 초대</h4><ul id="invite-list" class="manage-list"></ul></div>
+            <details class="create-group"><summary>새 모임 만들기</summary><form id="group-form"><label>모임 이름<input id="group-name" required></label><fieldset><legend>함께할 친구 · 최대 7명</legend><div id="group-friend-options" class="check-grid"></div></fieldset><button class="primary-button" type="submit">모임 만들기</button></form></details>
+            <ul id="group-list" class="group-list"></ul><p id="group-empty" class="empty compact">참여 중인 모임이 없어요.</p>
+          </section>
         </section>
       </div>
 
