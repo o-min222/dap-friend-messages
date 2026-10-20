@@ -20,7 +20,7 @@ class FakeElement {
 const allText = (node) => [node.textContent, ...node.children.map(allText)].join(" ");
 
 async function harness() {
-  const views = ["home", "friends", "groups"];
+  const views = ["home", "manage"];
   const ids = [
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread",
     "invite-count", "anonymous-thread-section", "anonymous-thread-list", "friend-thread-list", "group-thread-list", "contact-empty", "view-detail", "detail-back",
@@ -274,13 +274,29 @@ test("새 state는 파괴 작업 확인을 초기화하고 모임 이름 30 code
   assert.equal(view.sent.at(-1).type, "updateGroup");
 });
 
-test("HTML은 연락처 중심 구조, 별도 관리 탭, maxlength 없는 Unicode 입력을 제공한다", async () => {
+test("HTML은 쪽지와 통합 관리 2탭, semantic 관리 섹션, maxlength 없는 Unicode 입력을 제공한다", async () => {
   const html = await readFile(new URL("../palette/index.html", import.meta.url), "utf8");
   assert.match(html, /id="friend-thread-list"/u);
   assert.match(html, /id="group-thread-list"/u);
   assert.match(html, /id="view-detail"/u);
   assert.match(html, /친구 관리/u);
   assert.match(html, /모임 관리/u);
+  assert.match(html, /id="tab-manage"[^>]*aria-controls="view-manage"/u);
+  assert.match(html, /id="view-manage"[^>]*aria-labelledby="manage-title"/u);
+  assert.match(html, /<section class="management-section" aria-labelledby="friends-title">/u);
+  assert.match(html, /<section class="management-section" aria-labelledby="groups-title">/u);
+  assert.doesNotMatch(html, /id="tab-(?:friends|groups)"|id="view-(?:friends|groups)"/u);
   assert.match(html, /익명으로 보내기/u);
   assert.doesNotMatch(html, /id="(?:message-body|friend-alias|profile-name|group-name)"[^>]*maxlength/u);
+});
+
+test("관리 탭 하나에서 친구와 모임 기능을 같은 스크롤 화면에 함께 노출한다", async () => {
+  const view = await harness(); view.onMessage({ type: "state", state: state() });
+  view.elements["tab-manage"].onclick();
+  assert.equal(view.elements["view-home"].hidden, true);
+  assert.equal(view.elements["view-manage"].hidden, false);
+  assert.equal(view.elements["tab-manage"].attributes["aria-current"], "page");
+  assert.equal(view.elements["friend-list"].children.length, 2);
+  assert.equal(view.elements["group-list"].children.length, 1);
+  assert.equal(view.elements["invite-list"].children.length, 1);
 });
