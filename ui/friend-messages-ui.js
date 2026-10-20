@@ -5,9 +5,9 @@
   const viewNames = ["home", "manage"];
   const ids = [
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread",
-    "invite-count", "anonymous-thread-section", "anonymous-thread-list", "friend-thread-list", "group-thread-list", "contact-empty", "view-detail", "detail-back",
+    "invite-count", "thread-list", "contact-empty", "view-detail", "detail-back", "detail-avatar",
     "detail-kind", "detail-name", "detail-unread", "message-stack", "inbox-empty", "message-form", "composer-hint",
-    "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-add-trigger", "friend-form", "friend-code",
+    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-add-trigger", "friend-form", "friend-code",
     "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-row", "profile-form", "profile-name", "profile-current-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
     "invite-section", "invite-list", "group-add-trigger", "group-form", "group-name", "group-friend-options", "group-create-submit", "group-create-cancel", "group-list", "group-empty",
     "manage-dialog-backdrop", "manage-dialog", "manage-dialog-title", "manage-dialog-close", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel",
@@ -26,6 +26,10 @@
   let activeView = "home";
   let selectedTarget = null;
   let selectedStickerId = null;
+  let anonymousSelected = false;
+  let stickerTrayOpen = false;
+  let draftRevision = 0;
+  let pendingSend = null;
   let groupMemberIds = new Set();
   let removeArmedFriendId = null;
   let deleteArmedGroupId = null;
@@ -81,6 +85,46 @@
   const stickerNode = (id) => stickerMap[id] ? el("span", "note-sticker", stickerMap[id].emoji) : null;
   const targetKey = (target) => target ? `${target.type}:${target.id}` : "";
 
+  function resizeComposer() {
+    const input = elements["message-body"];
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight || 24, 96)}px`;
+  }
+
+  function renderAnonymousToggle() {
+    elements["anonymous-toggle"].setAttribute("aria-pressed", anonymousSelected ? "true" : "false");
+    elements["anonymous-toggle"].setAttribute("aria-label", `익명으로 보내기: ${anonymousSelected ? "켜짐" : "꺼짐"}`);
+    elements["anonymous-toggle"].className = `composer-icon${anonymousSelected ? " selected" : ""}`;
+  }
+
+  function renderStickerTray() {
+    elements["sticker-tray"].hidden = !stickerTrayOpen;
+    elements["sticker-toggle"].setAttribute("aria-expanded", stickerTrayOpen ? "true" : "false");
+    elements["sticker-toggle"].setAttribute("aria-label", stickerTrayOpen ? "스티커 선택 닫기" : "스티커 선택 열기");
+  }
+
+  function resetComposer() {
+    draftRevision += 1;
+    elements["message-body"].value = "";
+    elements["message-body"].setCustomValidity?.("");
+    elements["message-body"].setAttribute("aria-invalid", "false");
+    elements.counter.textContent = `0 / ${model.maxMessageLength}`;
+    selectedStickerId = null;
+    anonymousSelected = false;
+    stickerTrayOpen = false;
+    resizeComposer(); renderStickers(); renderAnonymousToggle(); renderStickerTray();
+  }
+
+  const draftSnapshot = () => JSON.stringify({
+    targetKey: targetKey(selectedTarget), body: elements["message-body"].value,
+    stickerId: selectedStickerId, anonymous: anonymousSelected,
+  });
+
+  const pendingMatchesDraft = (pending) => Boolean(pending
+    && pending.targetKey === targetKey(selectedTarget)
+    && pending.draftRevision === draftRevision
+    && pending.snapshot === draftSnapshot());
+
   function messageBelongsTo(message, target) {
     if (!target) return false;
     if (target.type === "anonymous") return message.anonymous && message.targetType !== "group";
@@ -112,6 +156,7 @@
   }
 
   function openTarget(target) {
+    if (targetKey(selectedTarget) !== targetKey(target)) resetComposer();
     selectedTarget = target;
     activeView = "detail";
     for (const view of viewNames) elements[`view-${view}`].hidden = true;
@@ -143,21 +188,27 @@
   }
 
   function renderThreads() {
-    elements["anonymous-thread-list"].replaceChildren();
-    elements["friend-thread-list"].replaceChildren();
-    elements["group-thread-list"].replaceChildren();
+    elements["thread-list"].replaceChildren();
     threadButtons = new Map();
     const anonymousTarget = { type: "anonymous", id: "anonymous", name: "익명 쪽지" };
-    const hasAnonymous = unreadFor(anonymousTarget) > 0;
-    elements["anonymous-thread-section"].hidden = !hasAnonymous;
-    if (hasAnonymous) appendThread(elements["anonymous-thread-list"], anonymousTarget, "발신자를 숨긴 받은 쪽지");
+    const targets = [];
+    if (unreadFor(anonymousTarget) > 0) targets.push({ target: anonymousTarget, meta: "읽기 전용 · 보낸 사람 비공개", disabled: false });
     for (const friend of model.friends) {
-      appendThread(elements["friend-thread-list"], { type: "friend", id: friend.id, name: friend.name }, friend.blocked ? "차단됨 · 관리에서 해제할 수 있어요" : "1:1 종이 쪽지", friend.blocked);
+      targets.push({ target: { type: "friend", id: friend.id, name: friend.name }, meta: friend.blocked ? "친구 · 차단됨" : "친구", disabled: friend.blocked });
     }
     for (const group of model.groups) {
-      appendThread(elements["group-thread-list"], { type: "group", id: group.id, name: group.name }, `${group.members.length}명 모임`);
+      targets.push({ target: { type: "group", id: group.id, name: group.name }, meta: `모임 · ${group.members.length}명`, disabled: false });
     }
-    const hasContacts = model.friends.length + model.groups.length > 0 || unreadFor(anonymousTarget) > 0;
+    const newest = (target) => targetMessages(target).reduce((latest, message) => Math.max(latest, new Date(message.createdAt).getTime() || 0), 0);
+    targets.sort((left, right) => Number(unreadFor(right.target) > 0) - Number(unreadFor(left.target) > 0)
+      || newest(right.target) - newest(left.target)
+      || left.target.name.localeCompare(right.target.name, "ko"));
+    for (const item of targets) {
+      const hasOpened = targetMessages(item.target).some((message) => Boolean(message.openedAt));
+      const status = unreadFor(item.target) ? `${item.meta} · 새 쪽지 도착` : hasOpened ? `${item.meta} · 열어 본 쪽지가 잠시 표시 중` : item.meta;
+      appendThread(elements["thread-list"], item.target, status, item.disabled);
+    }
+    const hasContacts = targets.length > 0;
     elements["contact-empty"].hidden = hasContacts;
   }
 
@@ -199,12 +250,14 @@
     const messages = targetMessages();
     const unread = unreadFor(selectedTarget);
     elements["detail-name"].textContent = selectedTarget.name;
-    elements["detail-kind"].textContent = selectedTarget.type === "group" ? "GROUP NOTE" : selectedTarget.type === "anonymous" ? "ANONYMOUS NOTE" : "FRIEND NOTE";
+    elements["detail-kind"].textContent = selectedTarget.type === "group" ? `모임 · ${currentContact?.members?.length || 0}명` : selectedTarget.type === "anonymous" ? "읽기 전용 · 보낸 사람 비공개" : "친구";
+    elements["detail-avatar"].textContent = selectedTarget.type === "group" ? "👥" : selectedTarget.type === "anonymous" ? "?" : "☺";
     elements["detail-unread"].textContent = String(unread);
     elements["detail-unread"].hidden = !unread;
     elements["message-form"].hidden = selectedTarget.type === "anonymous";
     elements["composer-hint"].hidden = selectedTarget.type !== "group";
-    elements.send.disabled = model.busy || selectedTarget.type === "anonymous";
+    elements.send.disabled = model.busy || Boolean(pendingSend) || selectedTarget.type === "anonymous";
+    renderAnonymousToggle(); renderStickerTray();
     renderMessages(messages);
   }
 
@@ -215,7 +268,7 @@
       button.type = "button";
       button.setAttribute("aria-label", `${label} 스티커${selectedStickerId === id ? " 선택됨" : ""}`);
       button.setAttribute("aria-pressed", selectedStickerId === id ? "true" : "false");
-      button.onclick = () => { selectedStickerId = selectedStickerId === id ? null : id; renderStickers(); };
+      button.onclick = () => { selectedStickerId = selectedStickerId === id ? null : id; draftRevision += 1; renderStickers(); stickerTrayOpen = false; renderStickerTray(); elements["sticker-toggle"].focus?.(); };
       elements["sticker-grid"].append(button);
     }
   }
@@ -377,7 +430,10 @@
     const index = dialogFocusables.indexOf(document.activeElement); const backwards = event.shiftKey === true;
     if ((!backwards && index === dialogFocusables.length - 1) || (backwards && index <= 0)) { event.preventDefault?.(); dialogFocusables[backwards ? dialogFocusables.length - 1 : 0].focus?.(); }
   });
-  elements["message-body"].addEventListener("input", () => { const count = codepointLength(elements["message-body"].value); elements.counter.textContent = `${count} / ${model.maxMessageLength}`; updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지"); });
+  elements["message-body"].addEventListener("input", () => { draftRevision += 1; const count = codepointLength(elements["message-body"].value); elements.counter.textContent = `${count} / ${model.maxMessageLength}`; updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지"); resizeComposer(); });
+  elements["sticker-toggle"].onclick = () => { stickerTrayOpen = !stickerTrayOpen; renderStickerTray(); if (stickerTrayOpen) elements["sticker-grid"].children[0]?.focus?.(); };
+  elements["anonymous-toggle"].onclick = () => { anonymousSelected = !anonymousSelected; draftRevision += 1; renderAnonymousToggle(); };
+  elements["message-form"].addEventListener("keydown", (event) => { if (event.key === "Escape" && stickerTrayOpen) { event.preventDefault?.(); stickerTrayOpen = false; renderStickerTray(); elements["sticker-toggle"].focus?.(); } });
   elements["group-name"].addEventListener("input", () => updateLengthValidity(elements["group-name"], 30, "모임 이름"));
   elements["group-rename-name"].addEventListener("input", () => updateLengthValidity(elements["group-rename-name"], 30, "모임 이름"));
   elements["friend-alias"].addEventListener("input", () => updateNameValidity(elements["friend-alias"], "친구 별칭"));
@@ -391,7 +447,7 @@
   elements["friend-message"].onclick = () => { const friend = model.friends.find((item) => item.id === dialogEntityId); if (!friend || friend.blocked) return; closeManageDialog(false); openTarget({ type: "friend", id: friend.id, name: friend.name }); };
   elements["friend-block"].onclick = () => { const friend = model.friends.find((item) => item.id === dialogEntityId); if (!friend || pendingDialogOperation) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "friend-block", operationId }; send({ type: friend.blocked ? "unblockFriend" : "blockFriend", friendId: friend.id, operationId }); renderManageDialog(false); };
   elements["friend-remove"].onclick = () => { const friend = model.friends.find((item) => item.id === dialogEntityId); if (!friend || pendingDialogOperation) return; if (removeArmedFriendId !== friend.id) { removeArmedFriendId = friend.id; renderManageDialog(false); } else { const operationId = nextOperationId(); removeArmedFriendId = null; pendingDialogOperation = { kind: "friend-remove", operationId }; send({ type: "removeFriend", friendId: friend.id, operationId }); renderManageDialog(false); } };
-  elements["message-form"].addEventListener("submit", (event) => { event.preventDefault(); if (!selectedTarget || selectedTarget.type === "anonymous") return; if (!updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지")) return; send({ type: "sendMessage", targetType: selectedTarget.type, targetId: selectedTarget.id, body: elements["message-body"].value, stickerId: selectedStickerId, anonymous: elements["anonymous-toggle"].checked === true }); });
+  elements["message-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingSend || !selectedTarget || selectedTarget.type === "anonymous") return; if (!updateLengthValidity(elements["message-body"], model.maxMessageLength, "쪽지")) return; const operationId = nextOperationId(); pendingSend = { targetKey: targetKey(selectedTarget), operationId, draftRevision, snapshot: draftSnapshot() }; send({ type: "sendMessage", targetType: selectedTarget.type, targetId: selectedTarget.id, body: elements["message-body"].value, stickerId: selectedStickerId, anonymous: anonymousSelected === true, operationId }); renderDetail(); });
   elements["group-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateLengthValidity(elements["group-name"], 30, "모임 이름")) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "group-create", operationId }; send({ type: "createGroup", name: elements["group-name"].value, memberIds: [...groupMemberIds], operationId }); renderManageDialog(false); });
   elements["group-rename-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateLengthValidity(elements["group-rename-name"], 30, "모임 이름")) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "group-rename", operationId }; send({ type: "updateGroup", groupId: dialogEntityId, name: elements["group-rename-name"].value, operationId }); renderManageDialog(false); });
   elements["group-invite-button"].onclick = () => { if (pendingDialogOperation || !elements["group-invite-select"].value) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "group-invite", operationId }; send({ type: "inviteGroup", groupId: dialogEntityId, memberIds: [elements["group-invite-select"].value], operationId }); renderManageDialog(false); };
@@ -404,15 +460,19 @@
     if (message?.type === "state") {
       removeArmedFriendId = null; deleteArmedGroupId = null; removeArmedMemberKey = null; leaveArmedGroupId = null;
       const completedDialogOperation = pendingDialogOperation?.operationId === message.operationId ? pendingDialogOperation : null;
+      const completedSend = pendingSend?.operationId === message.operationId ? pendingSend : null;
+      const shouldResetSentDraft = completedSend && message.sentTo === completedSend.targetKey && pendingMatchesDraft(completedSend);
+      if (completedSend) pendingSend = null;
       model = { groups: [], groupInvites: [], ...message.state }; render();
       if (message.notice) elements.status.textContent = message.notice;
-      if (message.sentTo) { elements["message-body"].value = ""; elements["anonymous-toggle"].checked = false; selectedStickerId = null; renderStickers(); elements.counter.textContent = `0 / ${model.maxMessageLength}`; }
+      if (shouldResetSentDraft) resetComposer();
       if (completedDialogOperation) {
         pendingDialogOperation = null;
         if (["profile", "friend-add", "friend-alias", "group-create", "friend-remove", "group-delete", "group-leave", "invite-response"].includes(completedDialogOperation.kind)) closeManageDialog(true);
         else { if (completedDialogOperation.kind === "group-invite") elements["group-invite-select"].value = ""; renderManageDialog(false); }
       }
     } else if (message?.type === "error") {
+      if (pendingSend?.operationId === message.operationId) { pendingSend = null; if (activeView === "detail") renderDetail(); }
       if (pendingDialogOperation?.operationId === message.operationId) pendingDialogOperation = null;
       elements.status.textContent = message.message;
       renderManageDialog(false);
@@ -425,5 +485,5 @@
     }
   });
 
-  renderStickers(); render(); send({ type: "ready" });
+  renderStickers(); renderAnonymousToggle(); renderStickerTray(); resizeComposer(); render(); send({ type: "ready" });
 })();

@@ -7,7 +7,8 @@ class FakeElement {
   constructor(tag = "div") {
     this.tagName = tag; this.children = []; this.attributes = {}; this.listeners = {};
     this.value = ""; this.textContent = ""; this.hidden = false; this.disabled = false;
-    this.className = ""; this.checked = false; this.focused = false;
+    this.className = ""; this.checked = false; this.focused = false; this.styleWriteCount = 0;
+    this.style = new Proxy({}, { set: (target, key, value) => { this.styleWriteCount += 1; target[key] = value; return true; } }); this.scrollHeight = 24;
   }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = [...children]; }
@@ -24,9 +25,9 @@ async function harness() {
   const views = ["home", "manage"];
   const ids = [
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread",
-    "invite-count", "anonymous-thread-section", "anonymous-thread-list", "friend-thread-list", "group-thread-list", "contact-empty", "view-detail", "detail-back",
+    "invite-count", "thread-list", "contact-empty", "view-detail", "detail-back", "detail-avatar",
     "detail-kind", "detail-name", "detail-unread", "message-stack", "inbox-empty", "message-form", "composer-hint",
-    "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-add-trigger", "friend-form", "friend-code",
+    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-add-trigger", "friend-form", "friend-code",
     "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-row", "profile-form", "profile-name", "profile-current-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
     "invite-section", "invite-list", "group-add-trigger", "group-form", "group-name", "group-friend-options", "group-create-submit", "group-create-cancel", "group-list", "group-empty",
     "manage-dialog-backdrop", "manage-dialog", "manage-dialog-title", "manage-dialog-close", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel",
@@ -59,8 +60,8 @@ const state = () => ({
   groups: [{ id: "g1", name: "산책 모임", owner: true, members: [{ id: "f1", name: "하늘" }, { id: "f2", name: "바다" }] }],
   groupInvites: [{ id: "i1", groupId: "g2", groupName: "점심 모임", inviterName: "구름" }],
   messages: [
-    { id: "m1", anonymous: false, senderId: "f1", senderName: "하늘", targetType: "friend", targetId: "f1", body: null, stickerId: null, createdAt: new Date().toISOString(), openedAt: null },
-    { id: "m2", anonymous: false, senderId: "f2", senderName: "바다", targetType: "group", targetId: "g1", body: null, stickerId: "cheer", createdAt: new Date().toISOString(), openedAt: null },
+    { id: "m1", anonymous: false, senderId: "f1", senderName: "하늘", targetType: "friend", targetId: "f1", body: null, stickerId: null, createdAt: "2026-10-20T12:00:00Z", openedAt: null },
+    { id: "m2", anonymous: false, senderId: "f2", senderName: "바다", targetType: "group", targetId: "g1", body: null, stickerId: "cheer", createdAt: "2026-10-20T11:00:00Z", openedAt: null },
   ],
 });
 
@@ -72,13 +73,12 @@ test("Google 연결은 사용자가 버튼을 누를 때만 요청한다", async
   assert.equal(view.sent.at(-1).type, "connectGoogle");
 });
 
-test("기본 화면은 친구와 모임 연락처 목록이며 상세에서 받은 쪽지만 필터링한다", async () => {
+test("기본 화면은 친구·모임 통합 목록이며 상세에서 대상 쪽지만 필터링한다", async () => {
   const view = await harness();
   view.onMessage({ type: "state", state: state() });
   assert.equal(view.elements["view-home"].hidden, false);
-  assert.equal(view.elements["friend-thread-list"].children.length, 2);
-  assert.equal(view.elements["group-thread-list"].children.length, 1);
-  view.elements["friend-thread-list"].children[0].children[0].onclick();
+  assert.equal(view.elements["thread-list"].children.length, 3);
+  view.elements["thread-list"].children[0].children[0].onclick();
   assert.equal(view.elements["view-detail"].hidden, false);
   assert.equal(view.elements["detail-name"].textContent, "하늘");
   assert.equal(view.elements["detail-name"].focused, true);
@@ -90,23 +90,29 @@ test("기본 화면은 친구와 모임 연락처 목록이며 상세에서 받�
 test("친구 상세에서 종이 쪽지, 스티커, 익명 선택을 바로 전송하고 성공 뒤 초기화한다", async () => {
   const view = await harness(); const next = state();
   view.onMessage({ type: "state", state: next });
-  view.elements["friend-thread-list"].children[0].children[0].onclick();
+  view.elements["thread-list"].children[0].children[0].onclick();
   view.elements["sticker-grid"].children[6].onclick();
   view.elements["message-body"].value = "오늘도 파이팅";
-  view.elements["anonymous-toggle"].checked = true;
+  view.elements["anonymous-toggle"].onclick();
   view.elements["message-form"].listeners.submit({ preventDefault() {} });
+  const operationId = view.sent.at(-1).operationId;
+  const sentCount = view.sent.length;
+  assert.match(operationId, /^palette-[A-Za-z0-9_-]+/u);
+  assert.equal(view.elements.send.disabled, true);
+  view.elements["message-form"].listeners.submit({ preventDefault() {} });
+  assert.equal(view.sent.length, sentCount);
   assert.deepEqual(
     { type: view.sent.at(-1).type, targetType: view.sent.at(-1).targetType, targetId: view.sent.at(-1).targetId, stickerId: view.sent.at(-1).stickerId, anonymous: view.sent.at(-1).anonymous },
     { type: "sendMessage", targetType: "friend", targetId: "f1", stickerId: "celebrate", anonymous: true },
   );
-  view.onMessage({ type: "state", state: next, sentTo: "friend:f1" });
-  assert.equal(view.elements["anonymous-toggle"].checked, false);
+  view.onMessage({ type: "state", state: next, sentTo: "friend:f1", operationId });
+  assert.equal(view.elements["anonymous-toggle"].attributes["aria-pressed"], "false");
   assert.equal(view.elements["message-body"].value, "");
 });
 
 test("모임 상세는 해당 모임 쪽지만 보여 주고 group payload를 보낸다", async () => {
   const view = await harness(); view.onMessage({ type: "state", state: state() });
-  view.elements["group-thread-list"].children[0].children[0].onclick();
+  view.elements["thread-list"].children[1].children[0].onclick();
   assert.equal(view.elements["detail-name"].textContent, "산책 모임");
   assert.equal(view.elements["message-stack"].children.length, 1);
   view.elements["message-body"].value = "모임 쪽지";
@@ -117,7 +123,7 @@ test("모임 상세는 해당 모임 쪽지만 보여 주고 group payload를 �
 
 test("목록으로 돌아가면 열었던 연락처 행에 초점을 복원한다", async () => {
   const view = await harness(); view.onMessage({ type: "state", state: state() });
-  const button = view.elements["friend-thread-list"].children[1].children[0];
+  const button = view.elements["thread-list"].children[2].children[0];
   button.onclick();
   view.elements["detail-back"].onclick();
   assert.equal(view.elements["view-home"].hidden, false);
@@ -129,10 +135,9 @@ test("익명 1:1은 최상단 읽기 전용 pseudo-thread로만 노출하고 친
   next.unreadCount = 3;
   next.messages.unshift({ id: "anon1", anonymous: true, senderId: "", senderName: "익명의 친구", targetType: "friend", targetId: "", body: null, stickerId: null, createdAt: new Date().toISOString(), openedAt: null });
   view.onMessage({ type: "state", state: next });
-  assert.equal(view.elements["anonymous-thread-section"].hidden, false);
-  assert.match(allText(view.elements["anonymous-thread-list"].children[0]), /익명 쪽지/u);
-  assert.equal(allText(view.elements["friend-thread-list"].children[0]).includes("2"), false);
-  view.elements["anonymous-thread-list"].children[0].children[0].onclick();
+  assert.match(allText(view.elements["thread-list"].children[0]), /익명 쪽지/u);
+  assert.doesNotMatch(allText(view.elements["thread-list"].children[0]), /하늘|바다|비밀 응원/u);
+  view.elements["thread-list"].children[0].children[0].onclick();
   assert.equal(view.elements["detail-name"].textContent, "익명 쪽지");
   assert.equal(view.elements["message-form"].hidden, true);
   assert.equal(view.elements["message-stack"].children.length, 1);
@@ -146,11 +151,11 @@ test("익명 쪽지를 연 뒤 목록 행이 사라지면 홈 탭으로 초점�
   next.messages = [{ id: "anon1", anonymous: true, senderId: "", senderName: "익명의 친구", targetType: "friend", targetId: "", body: null, stickerId: null, createdAt: new Date().toISOString(), openedAt: null }];
   next.unreadCount = 1;
   view.onMessage({ type: "state", state: next });
-  view.elements["anonymous-thread-list"].children[0].children[0].onclick();
+  view.elements["thread-list"].children[0].children[0].onclick();
   next.messages[0] = { ...next.messages[0], openedAt: new Date().toISOString(), body: "응원" };
   next.unreadCount = 0;
   view.onMessage({ type: "state", state: next });
-  assert.equal(view.elements["anonymous-thread-section"].hidden, true);
+  assert.doesNotMatch(allText(view.elements["thread-list"]), /익명 쪽지/u);
   view.elements["detail-back"].onclick();
   assert.equal(view.elements["tab-home"].focused, true);
 });
@@ -160,9 +165,9 @@ test("익명 모임 쪽지는 groupId로 모임 상세에만 귀속한다", asyn
   next.messages = [{ id: "ag1", anonymous: true, senderId: "", senderName: "익명의 친구", targetType: "group", targetId: "g1", body: null, stickerId: null, createdAt: new Date().toISOString(), openedAt: null }];
   next.unreadCount = 1;
   view.onMessage({ type: "state", state: next });
-  assert.equal(view.elements["anonymous-thread-section"].hidden, true);
-  assert.equal(view.elements["friend-thread-list"].children.length, 2);
-  view.elements["group-thread-list"].children[0].children[0].onclick();
+  assert.doesNotMatch(allText(view.elements["thread-list"]), /익명 쪽지/u);
+  assert.equal(view.elements["thread-list"].children.length, 3);
+  view.elements["thread-list"].children[0].children[0].onclick();
   assert.equal(view.elements["message-stack"].children.length, 1);
   assert.match(allText(view.elements["message-stack"]), /익명의 친구/u);
 });
@@ -173,13 +178,13 @@ test("열린 쪽지는 종이로 표시하고 익명 aria 문구에서 어색한
   next.unreadCount = 0;
   // 열린 익명 쪽지는 이미 pseudo-thread가 사라져야 하므로 일반 렌더에 재노출하지 않는다.
   view.onMessage({ type: "state", state: next });
-  assert.equal(view.elements["anonymous-thread-section"].hidden, true);
-  assert.equal(view.elements["friend-thread-list"].children.length, 2);
+  assert.doesNotMatch(allText(view.elements["thread-list"]), /익명 쪽지/u);
+  assert.equal(view.elements["thread-list"].children.length, 3);
 
   next.messages[0].openedAt = null;
   next.unreadCount = 1;
   view.onMessage({ type: "state", state: next });
-  view.elements["anonymous-thread-list"].children[0].children[0].onclick();
+  view.elements["thread-list"].children[0].children[0].onclick();
   next.messages[0].openedAt = new Date().toISOString();
   view.onMessage({ type: "state", state: next });
   const opened = view.elements["message-stack"].children[0];
@@ -190,7 +195,7 @@ test("열린 쪽지는 종이로 표시하고 익명 aria 문구에서 어색한
 
 test("이모지 쪽지는 100 codepoint를 허용하고 101자는 자르지 않은 채 막는다", async () => {
   const view = await harness(); view.onMessage({ type: "state", state: state() });
-  view.elements["friend-thread-list"].children[0].children[0].onclick();
+  view.elements["thread-list"].children[0].children[0].onclick();
   view.elements["message-body"].value = "😀".repeat(101);
   view.elements["message-body"].listeners.input();
   const count = view.sent.length;
@@ -202,6 +207,72 @@ test("이모지 쪽지는 100 codepoint를 허용하고 101자는 자르지 않�
   view.elements["message-body"].listeners.input();
   view.elements["message-form"].listeners.submit({ preventDefault() {} });
   assert.equal(view.sent.at(-1).type, "sendMessage");
+});
+
+test("통합 목록은 미열람과 최신 순으로 정렬하고 본문을 미리 노출하지 않는다", async () => {
+  const view = await harness(); const next = state();
+  next.messages = [
+    { ...next.messages[0], id: "older", createdAt: "2026-10-20T10:00:00Z", body: "목록에 보이면 안 되는 비밀" },
+    { ...next.messages[1], id: "newer", createdAt: "2026-10-20T13:00:00Z", body: "모임 본문도 금지" },
+  ];
+  view.onMessage({ type: "state", state: next });
+  assert.match(allText(view.elements["thread-list"].children[0]), /산책 모임/u);
+  assert.match(allText(view.elements["thread-list"].children[1]), /하늘/u);
+  assert.match(allText(view.elements["thread-list"].children[2]), /바다/u);
+  assert.doesNotMatch(allText(view.elements["thread-list"]), /목록에 보이면 안 되는 비밀|모임 본문도 금지/u);
+  assert.doesNotMatch(allText(view.elements["thread-list"]), /친구 관리|모임 관리/u);
+});
+
+test("컴팩트 작성기는 스티커 tray Escape와 자동 높이, polling 중 draft 상태 보존을 지원한다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next });
+  view.elements["thread-list"].children[0].children[0].onclick();
+  assert.equal(view.elements["sticker-tray"].hidden, true);
+  assert.equal(view.elements["sticker-toggle"].attributes["aria-expanded"], "false");
+  view.elements["sticker-toggle"].onclick();
+  assert.equal(view.elements["sticker-tray"].hidden, false);
+  assert.equal(view.elements["sticker-grid"].children[0].focused, true);
+  view.elements["message-form"].listeners.keydown({ key: "Escape", preventDefault() {} });
+  assert.equal(view.elements["sticker-tray"].hidden, true);
+  assert.equal(view.elements["sticker-toggle"].focused, true);
+
+  view.elements["sticker-toggle"].onclick(); view.elements["sticker-grid"].children[2].onclick();
+  view.elements["sticker-toggle"].onclick();
+  view.elements["anonymous-toggle"].onclick();
+  view.elements["message-body"].value = "폴링에도 남을 초안"; view.elements["message-body"].scrollHeight = 88; view.elements["message-body"].listeners.input();
+  assert.equal(view.elements["message-body"].style.height, "88px");
+  const writesBeforePolling = view.elements["message-body"].styleWriteCount;
+  view.onMessage({ type: "state", state: next });
+  assert.equal(view.elements["message-body"].styleWriteCount, writesBeforePolling);
+  assert.equal(view.elements["message-body"].value, "폴링에도 남을 초안");
+  assert.equal(view.elements["sticker-tray"].hidden, false);
+  assert.equal(view.elements["anonymous-toggle"].attributes["aria-pressed"], "true");
+  assert.match(view.elements["sticker-grid"].children[2].className, /selected/u);
+
+  view.elements["detail-back"].onclick(); view.elements["thread-list"].children[2].children[0].onclick();
+  assert.equal(view.elements["message-body"].value, "");
+  assert.equal(view.elements["anonymous-toggle"].attributes["aria-pressed"], "false");
+  assert.equal(view.elements["sticker-tray"].hidden, true);
+});
+
+test("늦은 send 성공·오류는 다른 대상의 새 초안이나 현재 pending을 바꾸지 않는다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next });
+  view.elements["thread-list"].children[0].children[0].onclick();
+  view.elements["message-body"].value = "A 이전 초안"; view.elements["message-body"].listeners.input();
+  view.elements["message-form"].listeners.submit({ preventDefault() {} }); const oldId = view.sent.at(-1).operationId;
+  view.elements["detail-back"].onclick(); view.elements["thread-list"].children[2].children[0].onclick();
+  view.elements["message-body"].value = "B 초안"; view.elements["message-body"].listeners.input();
+  view.elements["detail-back"].onclick(); view.elements["thread-list"].children[0].children[0].onclick();
+  view.elements["message-body"].value = "A 새 초안"; view.elements["message-body"].listeners.input();
+  view.onMessage({ type: "state", state: next, sentTo: "friend:f1", operationId: oldId });
+  assert.equal(view.elements["message-body"].value, "A 새 초안");
+  assert.equal(view.elements.send.disabled, false);
+
+  view.elements["message-form"].listeners.submit({ preventDefault() {} }); const currentId = view.sent.at(-1).operationId;
+  assert.notEqual(currentId, oldId); assert.equal(view.elements.send.disabled, true);
+  view.onMessage({ type: "error", message: "늦은 이전 오류", operationId: oldId });
+  assert.equal(view.elements["message-body"].value, "A 새 초안"); assert.equal(view.elements.send.disabled, true);
+  view.onMessage({ type: "error", message: "현재 전송 실패", operationId: currentId });
+  assert.equal(view.elements["message-body"].value, "A 새 초안"); assert.equal(view.elements.send.disabled, false);
 });
 
 test("관리 목록은 보기 전용 요약 행이고 프로필·친구·모임 상세를 dialog로 연다", async () => {
@@ -337,6 +408,13 @@ test("HTML 관리 목록 밖에는 입력이 없고 modal·헤더 아이콘·380
   assert.match(css, /\.management-icon-action\{[^}]*width:44px;[^}]*height:44px/su);
   assert.match(css, /@media\(max-width:395px\)[\s\S]*\.manage-dialog\{width:100%/u);
   assert.match(css, /\.view\{overflow-x:hidden\}/u);
+  assert.match(html, /<textarea id="message-body" rows="1" aria-label="쪽지 내용" name="body" autocomplete="off" placeholder="쪽지 쓰기…"/u);
+  assert.match(html, /id="anonymous-toggle"[^>]*aria-label="익명으로 보내기: 꺼짐"[^>]*aria-pressed="false"/u);
+  assert.match(html, /id="sticker-tray"[^>]*hidden/u);
+  assert.doesNotMatch(html, /새 종이 쪽지|<fieldset class="stickers"/u);
+  assert.match(css, /\.composer-bar\{[^}]*grid-template-columns:44px minmax\(0,1fr\) 44px 44px/su);
+  assert.match(css, /\.detail-view\{[^}]*min-width:0;[^}]*overflow:hidden/su);
+  assert.doesNotMatch(css, /transition:\s*all/u);
   assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.management-icon-action:hover\{background:#40354f;color:var\(--ink\)\}\.manage-avatar\{background:#40354f;color:var\(--ink\)\}\}/u);
   const luminance = (hex) => {
     const values = hex.match(/[0-9a-f]{2}/giu).map((part) => Number.parseInt(part, 16) / 255).map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
@@ -344,6 +422,7 @@ test("HTML 관리 목록 밖에는 입력이 없고 modal·헤더 아이콘·380
   };
   const light = luminance("f5f0e8"); const dark = luminance("40354f");
   assert.ok((light + 0.05) / (dark + 0.05) >= 4.5);
+  assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.composer-icon\.selected,\.thread-avatar\{background:#40354f;color:var\(--ink\)\}/u);
 });
 
 test("관리 탭은 친구와 모임 목록을 같은 스크롤 흐름에 노출한다", async () => {
