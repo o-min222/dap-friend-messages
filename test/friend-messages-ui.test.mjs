@@ -18,6 +18,7 @@ class FakeElement {
 }
 
 const allText = (node) => [node.textContent, ...node.children.map(allText)].join(" ");
+let harnessSequence = 0;
 
 async function harness() {
   const views = ["home", "manage"];
@@ -25,18 +26,20 @@ async function harness() {
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread",
     "invite-count", "anonymous-thread-section", "anonymous-thread-list", "friend-thread-list", "group-thread-list", "contact-empty", "view-detail", "detail-back",
     "detail-kind", "detail-name", "detail-unread", "message-stack", "inbox-empty", "message-form", "composer-hint",
-    "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-form", "friend-code",
-    "friend-alias", "profile-form", "profile-name", "profile-current-name", "friend-list", "friend-empty",
+    "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-add-toggle", "friend-form", "friend-code",
+    "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-edit-toggle", "profile-form", "profile-name", "profile-current-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
     "invite-section", "invite-list", "group-form", "group-name", "group-friend-options", "group-list", "group-empty",
     ...views.flatMap((name) => [`tab-${name}`, `view-${name}`]),
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
   const sent = [];
   let onMessage;
+  const session = (++harnessSequence).toString(16).padStart(12, "0");
+  const crypto = { randomUUID() { return `${session.slice(0, 8)}-${session.slice(8)}-4000-8000-000000000000`; } };
   const window = { dapPalette: { postMessage(message) { sent.push(message); }, onMessage(handler) { onMessage = handler; }, close() {} } };
   const document = { getElementById(id) { return elements[id]; }, createElement(tag) { return new FakeElement(tag); } };
   const source = await readFile(new URL("../ui/friend-messages-ui.js", import.meta.url), "utf8");
-  vm.runInNewContext(source, { window, document, Intl, Date, Set });
+  vm.runInNewContext(source, { window, document, Intl, Date, Set, crypto });
   return { elements, sent, onMessage };
 }
 
@@ -198,6 +201,7 @@ test("이모지 쪽지는 100 codepoint를 허용하고 101자는 자르지 않�
 
 test("친구 별칭과 공개 별명은 codepoint 20자와 Cc/Cf 규칙을 지킨다", async () => {
   const view = await harness(); view.onMessage({ type: "state", state: state() });
+  view.elements["friend-add-toggle"].onclick();
   view.elements["friend-code"].value = "ABC123";
   view.elements["friend-alias"].value = "😀".repeat(21);
   view.elements["friend-alias"].listeners.input();
@@ -208,6 +212,7 @@ test("친구 별칭과 공개 별명은 codepoint 20자와 Cc/Cf 규칙을 지�
   view.elements["friend-alias"].value = "친구\u200B별칭";
   view.elements["friend-alias"].listeners.input();
   assert.match(view.elements["friend-alias"].validationMessage, /제어 문자/u);
+  view.elements["profile-edit-toggle"].onclick();
   view.elements["profile-name"].value = "🌿".repeat(20);
   view.elements["profile-name"].listeners.input();
   view.elements["profile-form"].listeners.submit({ preventDefault() {} });
@@ -218,14 +223,195 @@ test("친구 별칭을 수정하거나 공개 별명으로 되돌릴 수 있다"
   const view = await harness(); const next = state();
   next.friends[0] = { ...next.friends[0], name: "산책친구", alias: "산책친구", publicName: "하늘", hasAlias: true };
   view.onMessage({ type: "state", state: next });
+  assert.equal(view.elements["friend-list"].children[0].children.length, 2);
+  assert.equal(view.elements["friend-list"].children[0].children[1].children[2].attributes["aria-expanded"], "false");
+  view.elements["friend-list"].children[0].children[1].children[2].onclick();
   const editor = view.elements["friend-list"].children[0].children[2];
-  editor.children[0].value = "동네친구"; editor.children[1].onclick();
+  assert.equal(view.elements["friend-list"].children[0].children[1].children[2].attributes["aria-expanded"], "true");
+  assert.equal(editor.children[0].focused, true);
+  editor.children[0].value = "동네친구"; editor.children[0].listeners.input(); editor.children[1].onclick();
   assert.equal(view.sent.at(-1).alias, "동네친구");
-  editor.children[2].onclick();
+  const saveOperationId = view.sent.at(-1).operationId;
+  next.friends[0] = { ...next.friends[0], name: "동네친구", alias: "동네친구" };
+  view.onMessage({ type: "state", state: next, notice: "친구 별칭을 바꿨어요.", operationId: saveOperationId });
+  assert.equal(view.elements["friend-list"].children[0].children.length, 2);
+  assert.equal(view.elements["friend-list"].children[0].children[1].children[2].focused, true);
+  view.elements["friend-list"].children[0].children[1].children[2].onclick();
+  view.elements["friend-list"].children[0].children[2].children[2].onclick();
   assert.equal(view.sent.at(-1).alias, null);
+  const resetOperationId = view.sent.at(-1).operationId;
   next.friends[0] = { ...next.friends[0], name: "하늘", alias: "", publicName: "하늘", hasAlias: false };
+  view.onMessage({ type: "state", state: next, notice: "공개 별명으로 되돌렸어요.", operationId: resetOperationId });
+  assert.equal(view.elements["friend-list"].children[0].children.length, 2);
+  view.elements["friend-list"].children[0].children[1].children[2].onclick();
+  view.elements["friend-list"].children[0].children[2].children[3].onclick();
+  assert.equal(view.elements["friend-list"].children[0].children.length, 2);
+  assert.equal(view.elements["friend-list"].children[0].children[1].children[2].focused, true);
+});
+
+test("프로필은 기본 카드에서 수정할 때만 편집하고 성공·취소 뒤 수정 버튼으로 초점을 복원한다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next });
+  assert.equal(view.elements["profile-form"].hidden, true);
+  assert.equal(view.elements["profile-edit-toggle"].attributes["aria-expanded"], "false");
+  view.elements["profile-edit-toggle"].onclick();
+  assert.equal(view.elements["profile-form"].hidden, false);
+  assert.equal(view.elements["profile-name"].focused, true);
+  view.elements["profile-name"].value = "새구름"; view.elements["profile-name"].listeners.input();
+  view.elements["profile-form"].listeners.submit({ preventDefault() {} });
+  assert.deepEqual({ type: view.sent.at(-1).type, name: view.sent.at(-1).name }, { type: "updateProfileName", name: "새구름" });
+  let operationId = view.sent.at(-1).operationId;
   view.onMessage({ type: "state", state: next });
-  assert.equal(view.elements["friend-list"].children[0].children[2].children[0].value, "");
+  assert.equal(view.elements["profile-form"].hidden, false);
+  assert.equal(view.elements["profile-name"].value, "새구름");
+  view.onMessage({ type: "error", message: "공개 별명을 저장하지 못했어요.", operationId });
+  assert.equal(view.elements["profile-form"].hidden, false);
+  assert.equal(view.elements["profile-name"].value, "새구름");
+  assert.match(view.elements.status.textContent, /저장하지 못했어요/u);
+  view.elements["profile-form"].listeners.submit({ preventDefault() {} });
+  operationId = view.sent.at(-1).operationId;
+  next.me.name = "새구름";
+  view.onMessage({ type: "state", state: next, notice: "공개 별명을 바꿨어요.", operationId });
+  assert.equal(view.elements["profile-form"].hidden, true);
+  assert.equal(view.elements["profile-edit-toggle"].focused, true);
+
+  view.elements["profile-edit-toggle"].onclick();
+  view.elements["profile-name"].value = "🌿".repeat(21); view.elements["profile-name"].listeners.input();
+  assert.match(view.elements["profile-name"].validationMessage, /20자/u);
+  view.elements["profile-cancel"].onclick();
+  assert.equal(view.elements["profile-form"].hidden, true);
+  assert.equal(view.elements["profile-edit-toggle"].focused, true);
+  view.elements["profile-edit-toggle"].onclick();
+  assert.equal(view.elements["profile-name"].validationMessage, "");
+  assert.equal(view.elements["profile-name"].attributes["aria-invalid"], "false");
+});
+
+test("친구 추가는 요청 성공 때만 닫고 초기화하며 실패 시 입력을 보존한다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next });
+  assert.equal(view.elements["friend-form"].hidden, true);
+  view.elements["friend-add-toggle"].onclick();
+  assert.equal(view.elements["friend-add-toggle"].attributes["aria-expanded"], "true");
+  assert.equal(view.elements["friend-code"].focused, true);
+  view.elements["friend-code"].value = "ABC123"; view.elements["friend-code"].listeners.input();
+  view.elements["friend-alias"].value = "새친구"; view.elements["friend-alias"].listeners.input();
+  view.elements["friend-form"].listeners.submit({ preventDefault() {} });
+  let operationId = view.sent.at(-1).operationId;
+  view.onMessage({ type: "state", state: next });
+  assert.equal(view.elements["friend-form"].hidden, false);
+  assert.equal(view.elements["friend-code"].value, "ABC123");
+  assert.equal(view.elements["friend-alias"].value, "새친구");
+  view.onMessage({ type: "error", message: "이미 연결된 친구예요.", operationId });
+  assert.equal(view.elements["friend-form"].hidden, false);
+  assert.equal(view.elements["friend-code"].value, "ABC123");
+  assert.equal(view.elements["friend-alias"].value, "새친구");
+  assert.match(view.elements.status.textContent, /이미 연결/u);
+  view.elements["friend-form"].listeners.submit({ preventDefault() {} });
+  operationId = view.sent.at(-1).operationId;
+  view.onMessage({ type: "state", state: next, notice: "친구를 연결했어요.", operationId });
+  assert.equal(view.elements["friend-form"].hidden, true);
+  assert.equal(view.elements["friend-code"].value, "");
+  assert.equal(view.elements["friend-add-toggle"].focused, true);
+  view.elements["friend-add-toggle"].onclick();
+  view.elements["friend-alias"].value = "😀".repeat(21); view.elements["friend-alias"].listeners.input();
+  assert.match(view.elements["friend-alias"].validationMessage, /20자/u);
+  view.elements["friend-add-cancel"].onclick();
+  assert.equal(view.elements["friend-form"].hidden, true);
+  assert.equal(view.elements["friend-add-toggle"].focused, true);
+  view.elements["friend-add-toggle"].onclick();
+  assert.equal(view.elements["friend-alias"].validationMessage, "");
+  assert.equal(view.elements["friend-alias"].attributes["aria-invalid"], "false");
+});
+
+test("다른 친구의 별칭 수정을 열면 이전 편집을 닫고 오류 시 현재 초안을 보존한다", async () => {
+  const view = await harness(); view.onMessage({ type: "state", state: state() });
+  view.elements["friend-list"].children[0].children[1].children[2].onclick();
+  view.elements["friend-list"].children[0].children[2].children[0].value = "첫 초안";
+  view.elements["friend-list"].children[0].children[2].children[0].listeners.input();
+  view.elements["friend-list"].children[1].children[1].children[2].onclick();
+  assert.equal(view.elements["friend-list"].children[0].children.length, 2);
+  const secondEditor = view.elements["friend-list"].children[1].children[2];
+  secondEditor.children[0].value = "둘째 초안"; secondEditor.children[0].listeners.input(); secondEditor.children[1].onclick();
+  const operationId = view.sent.at(-1).operationId;
+  view.onMessage({ type: "state", state: state() });
+  assert.equal(view.elements["friend-list"].children[1].children[2].children[0].value, "둘째 초안");
+  view.onMessage({ type: "error", message: "별칭을 저장하지 못했어요.", operationId });
+  assert.equal(view.elements["friend-list"].children[1].children[2].children[0].value, "둘째 초안");
+  assert.match(view.elements.status.textContent, /저장하지 못했어요/u);
+});
+
+test("프로필·친구 추가·친구 별칭 중 하나만 열고 이전 요청의 늦은 성공 응답을 무시한다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next });
+
+  view.elements["profile-edit-toggle"].onclick();
+  view.elements["profile-name"].value = "프로필 초안"; view.elements["profile-name"].listeners.input();
+  view.elements["profile-form"].listeners.submit({ preventDefault() {} });
+  const abandonedProfileOperationId = view.sent.at(-1).operationId;
+  view.elements["friend-add-toggle"].onclick();
+  assert.equal(view.elements["profile-form"].hidden, true);
+  assert.equal(view.elements["profile-edit-toggle"].attributes["aria-expanded"], "false");
+  assert.equal(view.elements["friend-form"].hidden, false);
+  view.onMessage({ type: "state", state: next, notice: "공개 별명을 바꿨어요.", operationId: abandonedProfileOperationId });
+  assert.equal(view.elements["friend-form"].hidden, false);
+
+  view.elements["friend-code"].value = "ABC123"; view.elements["friend-code"].listeners.input();
+  view.elements["friend-alias"].value = "추가 초안"; view.elements["friend-alias"].listeners.input();
+  view.elements["friend-form"].listeners.submit({ preventDefault() {} });
+  const abandonedAddOperationId = view.sent.at(-1).operationId;
+  view.elements["friend-list"].children[0].children[1].children[2].onclick();
+  assert.equal(view.elements["friend-form"].hidden, true);
+  assert.equal(view.elements["friend-add-toggle"].attributes["aria-expanded"], "false");
+  assert.equal(view.elements["friend-list"].children[0].children.length, 3);
+  view.onMessage({ type: "state", state: next, notice: "친구를 연결했어요.", operationId: abandonedAddOperationId });
+  assert.equal(view.elements["friend-list"].children[0].children.length, 3);
+
+  const aliasEditor = view.elements["friend-list"].children[0].children[2];
+  aliasEditor.children[0].value = "별칭 초안"; aliasEditor.children[0].listeners.input(); aliasEditor.children[1].onclick();
+  const abandonedAliasOperationId = view.sent.at(-1).operationId;
+  view.elements["profile-edit-toggle"].onclick();
+  assert.equal(view.elements["friend-list"].children[0].children.length, 2);
+  assert.equal(view.elements["profile-form"].hidden, false);
+  assert.equal(view.elements["profile-name"].focused, true);
+  view.onMessage({ type: "state", state: next, notice: "친구 별칭을 바꿨어요.", operationId: abandonedAliasOperationId });
+  assert.equal(view.elements["profile-form"].hidden, false);
+});
+
+test("같은 편집기를 다시 연 뒤 이전 성공·오류가 새 요청 상태를 바꾸지 않는다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next });
+
+  view.elements["profile-edit-toggle"].onclick();
+  view.elements["profile-name"].value = "이전 요청"; view.elements["profile-name"].listeners.input();
+  view.elements["profile-form"].listeners.submit({ preventDefault() {} });
+  const oldOperationId = view.sent.at(-1).operationId;
+  view.elements["friend-add-toggle"].onclick();
+  view.elements["profile-edit-toggle"].onclick();
+  view.elements["profile-name"].value = "현재 요청"; view.elements["profile-name"].listeners.input();
+  view.elements["profile-form"].listeners.submit({ preventDefault() {} });
+  const currentOperationId = view.sent.at(-1).operationId;
+
+  view.onMessage({ type: "state", state: next, notice: "공개 별명을 바꿨어요.", operationId: oldOperationId });
+  assert.equal(view.elements["profile-form"].hidden, false);
+  assert.equal(view.elements["profile-name"].value, "현재 요청");
+  assert.equal(view.elements["profile-save"].disabled, true);
+  view.onMessage({ type: "error", message: "이전 요청 오류", operationId: oldOperationId });
+  assert.equal(view.elements["profile-save"].disabled, true);
+  assert.equal(view.elements["profile-name"].value, "현재 요청");
+  view.onMessage({ type: "state", state: next, notice: "공개 별명을 바꿨어요.", operationId: currentOperationId });
+  assert.equal(view.elements["profile-form"].hidden, true);
+});
+
+test("팔레트를 다시 열어도 편집 요청 ID가 이전 문서와 충돌하지 않는다", async () => {
+  const first = await harness(); const second = await harness();
+  for (const view of [first, second]) {
+    view.onMessage({ type: "state", state: state() });
+    view.elements["profile-edit-toggle"].onclick();
+    view.elements["profile-name"].value = "구름";
+    view.elements["profile-name"].listeners.input();
+    view.elements["profile-form"].listeners.submit({ preventDefault() {} });
+  }
+  const firstId = first.sent.at(-1).operationId;
+  const secondId = second.sent.at(-1).operationId;
+  assert.match(firstId, /^[A-Za-z0-9_-]{1,64}$/u);
+  assert.match(secondId, /^[A-Za-z0-9_-]{1,64}$/u);
+  assert.notEqual(firstId, secondId);
 });
 
 test("친구 삭제와 모임 삭제/나가기/내보내기는 두 번째 확인에서만 전송한다", async () => {
@@ -285,6 +471,8 @@ test("HTML은 쪽지와 통합 관리 2탭, semantic 관리 섹션, maxlength �
   assert.match(html, /id="view-manage"[^>]*aria-labelledby="manage-title"/u);
   assert.match(html, /<section class="management-section" aria-labelledby="friends-title">/u);
   assert.match(html, /<section class="management-section" aria-labelledby="groups-title">/u);
+  assert.match(html, /id="profile-edit-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="profile-form"/u);
+  assert.match(html, /id="friend-add-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="friend-form"/u);
   assert.doesNotMatch(html, /id="tab-(?:friends|groups)"|id="view-(?:friends|groups)"/u);
   assert.match(html, /익명으로 보내기/u);
   assert.doesNotMatch(html, /id="(?:message-body|friend-alias|profile-name|group-name)"[^>]*maxlength/u);

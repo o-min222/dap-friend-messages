@@ -484,10 +484,12 @@ export function activate(ctx) {
 
   const onPaletteMessage = async (message) => {
     if (!message || typeof message !== "object" || disposed) return;
+    const operationId = typeof message.operationId === "string" && /^[A-Za-z0-9_-]{1,64}$/u.test(message.operationId) ? message.operationId : undefined;
+    const operationMeta = operationId ? { operationId } : {};
     if (message.type === "ready") return pushState();
     if (message.type === "connectGoogle") return connectGoogle();
     if (message.type === "refresh") return syncState({ announce: true });
-    if (state.connection !== "connected") return post({ type: "error", message: "먼저 Google 계정을 연결해 주세요." });
+    if (state.connection !== "connected") return post({ type: "error", message: "먼저 Google 계정을 연결해 주세요.", ...operationMeta });
     try {
       if (message.type === "addFriend") {
         await request(BACKEND_ACTIONS.connectFriend, {
@@ -495,18 +497,18 @@ export function activate(ctx) {
           alias: validateFriendAlias(message.alias),
         });
         await syncState();
-        pushState({ notice: "친구를 연결했어요." });
+        pushState({ notice: "친구를 연결했어요.", ...operationMeta });
       } else if (message.type === "updateFriendAlias") {
         const friendId = String(message.friendId || "");
         if (!state.friends.some((friend) => friend.id === friendId)) throw new Error("친구를 다시 선택해 주세요.");
         const alias = validateFriendAlias(message.alias);
         await request(BACKEND_ACTIONS.updateFriendAlias, { friendId, alias });
         await syncState();
-        pushState({ notice: alias ? "친구 별칭을 바꿨어요." : "공개 별명으로 되돌렸어요." });
+        pushState({ notice: alias ? "친구 별칭을 바꿨어요." : "공개 별명으로 되돌렸어요.", ...operationMeta });
       } else if (message.type === "updateProfileName") {
         await request(BACKEND_ACTIONS.updateProfileName, { displayName: validateProfileName(message.name) });
         await syncState();
-        pushState({ notice: "공개 별명을 바꿨어요." });
+        pushState({ notice: "공개 별명을 바꿨어요.", ...operationMeta });
       } else if (message.type === "sendMessage") {
         const targetType = message.targetType === "group" ? "group" : "friend";
         const targetId = String(message.targetId || "");
@@ -576,7 +578,7 @@ export function activate(ctx) {
         await syncState();
       }
     } catch (error) {
-      post({ type: "error", message: error instanceof Error ? error.message : "요청을 처리하지 못했어요." });
+      post({ type: "error", message: error instanceof Error ? error.message : "요청을 처리하지 못했어요.", ...operationMeta });
     }
   };
 
