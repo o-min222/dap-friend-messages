@@ -1,48 +1,48 @@
 # DAP Friend Messages
 
-친구 코드로 1:1 친구를 연결하고 100자 이내 쪽지를 주고받는 DAP 플러그인입니다. DAP 1.4.0 이상의 Host-managed Google OAuth와 Supabase Edge Function을 사용합니다.
+친구 또는 최대 8명의 모임에 100자 종이 쪽지와 내장 스티커를 보내는 DAP 플러그인입니다. 채팅방 대신 접힌 봉투를 열어 쪽지를 읽고, 서버 `expires_at`(약 5초)에 화면에서 사라지는 흐름입니다.
 
 ## 기능
 
-- 상단 제목 영역을 끌어 palette 창 이동
-- 사용자가 버튼을 눌렀을 때만 Google 동의 화면 열기
-- A–F와 숫자로 구성된 6자리 친구 코드
-- 친구 연결·삭제·차단·차단 해제
-- 친구 목록과 열지 않은 쪽지 메타데이터 표시
-- 친구에게 100자 이내 쪽지 전송
-- 10초 간격 single-flight polling 및 수동 새로고침
-- 쪽지를 열 때만 본문을 받아 표시하고 서버 `expires_at`에 화면에서 제거
+- 사용자가 버튼을 누를 때만 Google 연결
+- A–F와 숫자로 된 6자리 친구 코드, 친구 차단·삭제
+- 친구 1명 또는 모임 전체에 쪽지 전송
+- 본문 또는 내장 스티커 중 하나 이상, 본문 최대 100자
+- 고정 sticker ID: `smile`, `cheer`, `love`, `surprise`, `sulk`, `cry`, `celebrate`, `tired`
+- 업로드 없는 앱 내장 preset만 제공
+- 모임 생성·이름 변경·친구 초대·초대 수락/거절·멤버 내보내기·나가기·삭제
+- 모임은 최대 8명. 모임장만 이름 변경·초대·내보내기·삭제 가능하며 일반 멤버만 나가기 가능
+- 모임 전송은 서버가 모든 수신자와 발신자의 친구·차단 상태를 재검사하며, 하나라도 실패하면 전체 전송 취소
+- 10초 single-flight polling, 본문은 `open` 응답에서만 수신
 
-## 인증과 데이터 흐름
+## Edge action adapter
 
-1. 사용자가 palette의 **Google로 연결** 버튼을 누릅니다.
-2. 플러그인은 `ctx.host.oauth.connect()`를 `provider: "google"`, `connectionId: "google"`, `openid email profile` scope로 호출합니다.
-3. Google refresh token은 DAP Host의 보호 저장소에 남고 플러그인에는 전달되지 않습니다.
-4. Host에서 받은 짧은 수명의 Google access token을 Edge Function의 `{ action: "session" }` 요청에 한 번 사용합니다.
-5. Edge Function이 반환한 opaque `session_token`은 플러그인 메모리에만 보관하며 재시작 시 사라집니다.
-6. 이후 요청은 opaque Bearer로 아래 action만 호출합니다. 401이면 Google access token을 새로 받아 세션 교환을 한 번만 재시도합니다.
-
-Endpoint: `https://vowrjkctldqxizvleogd.supabase.co/functions/v1/friend-messages`
+wire action 이름은 `dap_friend_messages/plugin.mjs`의 `BACKEND_ACTIONS` 한곳에서 조정합니다.
 
 | action | payload |
 | --- | --- |
 | `state` | 없음 |
-| `connect` | `friend_code` |
-| `send` | `recipient_id`, `body`, `client_nonce` |
-| `open` | `message_id` |
-| `remove` | `friend_id` |
-| `block` | `friend_id` |
-| `unblock` | `friend_id` |
+| `connect` | `friendCode` |
+| `sendMessage` | `targetType`, `targetId`, `body`, `stickerId`, `clientNonce` |
+| `open` | `messageId` |
+| `remove` / `block` / `unblock` | `friendId` |
+| `createGroup` | `name`, `memberIds` |
+| `updateGroup` | `groupId`, `name` |
+| `inviteGroup` | `groupId`, `memberIds` |
+| `respondGroupInvite` | `inviteId`, `accept` |
+| `removeGroupMember` | `groupId`, `memberId` |
+| `leaveGroup` / `deleteGroup` | `groupId` |
 
-## 개인정보 및 보안
+Endpoint: `https://vowrjkctldqxizvleogd.supabase.co/functions/v1/friend-messages`
 
-- 네트워크 전송은 TLS로 보호되고 서버 저장 데이터는 저장 암호화를 사용합니다.
-- 이 서비스는 종단간 암호화(E2EE)가 아닙니다. 서버는 기능 제공을 위해 쪽지 본문을 처리할 수 있습니다.
-- 쪽지 본문은 로그·분석·오류 보고 등 텔레메트리에 기록하지 않습니다.
-- Google refresh token은 DAP Host가 보관하며 플러그인은 접근할 수 없습니다.
-- Edge opaque session은 메모리에만 존재하고 만료 또는 플러그인 종료 시 폐기합니다.
-- palette에는 Google/opaque 토큰을 전달하지 않습니다.
-- publishable key는 공개 클라이언트 식별자이며 `service_role` 또는 secret key를 사용하지 않습니다.
+## 보안과 개인정보
+
+- Google refresh token은 DAP Host만 보관합니다.
+- Edge opaque session은 플러그인 메모리에만 유지하고 palette에는 전달하지 않습니다.
+- 모든 네트워크 요청은 main-side에서만 수행합니다.
+- 전송은 TLS, 서버 데이터는 저장 암호화를 사용하지만 종단간 암호화(E2EE)는 아닙니다.
+- 쪽지 본문은 로그·분석·오류 보고 텔레메트리에 기록하지 않습니다.
+- publishable key만 사용하고 `service_role` 또는 secret key를 사용하지 않습니다.
 
 ## 검증
 
@@ -50,5 +50,3 @@ Endpoint: `https://vowrjkctldqxizvleogd.supabase.co/functions/v1/friend-messages
 npm test
 npm run check
 ```
-
-외부 런타임 의존성이 없어 설치 단계가 필요하지 않습니다.
