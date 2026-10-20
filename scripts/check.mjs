@@ -21,7 +21,7 @@ for (const path of required) assert.ok((await stat(resolve(root, path))).isFile(
 const manifest = await readFile(resolve(root, "plugin.yaml"), "utf8");
 for (const line of [
   "id: dap.friend_messages",
-  "version: 0.1.0",
+  "version: 0.1.1",
   "entry: dap_friend_messages.plugin:activate",
   "min_app_version: 1.4.0",
   "  - window.palette",
@@ -46,6 +46,11 @@ assert.match(html, /\.\.\/ui\/friend-messages-ui\.js/u);
 assert.match(html, /aria-live/u);
 assert.match(html, /종단간 암호화\(E2EE\)는 아니/u);
 assert.match(html, /본문은 텔레메트리에 기록하지 않습니다/u);
+
+const css = await readFile(resolve(root, "ui/friend-messages.css"), "utf8");
+assert.match(css, /\.app-header\s*\{[^}]*-webkit-app-region:\s*drag/su, "상단 헤더는 창 이동 영역이어야 합니다.");
+assert.match(css, /\.header-actions\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "헤더 버튼은 클릭 가능해야 합니다.");
+assert.match(css, /\.icon-button\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "개별 헤더 버튼도 이동 영역에서 제외해야 합니다.");
 
 const ui = await readFile(resolve(root, "ui/friend-messages-ui.js"), "utf8");
 assert.doesNotMatch(ui, /\bfetch\s*\(/u, "네트워크 요청은 main-side에서만 해야 합니다.");
