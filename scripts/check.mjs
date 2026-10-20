@@ -21,7 +21,7 @@ for (const path of required) assert.ok((await stat(resolve(root, path))).isFile(
 const manifest = await readFile(resolve(root, "plugin.yaml"), "utf8");
 for (const line of [
   "id: dap.friend_messages",
-  "version: 0.5.2",
+  "version: 0.6.0",
   "entry: dap_friend_messages.plugin:activate",
   "min_app_version: 1.4.0",
   "  - window.palette",
@@ -29,7 +29,7 @@ for (const line of [
 ]) assert.ok(manifest.includes(line), `plugin.yaml에 '${line}'이 필요합니다.`);
 assert.doesNotMatch(manifest, /storage\.private/u, "메모리 세션만 사용하므로 storage.private 권한이 없어야 합니다.");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-assert.equal(packageJson.version, "0.5.2", "plugin.yaml과 package.json 버전이 같아야 합니다.");
+assert.equal(packageJson.version, "0.6.0", "plugin.yaml과 package.json 버전이 같아야 합니다.");
 
 const entry = await readFile(resolve(root, "dap_friend_messages/plugin.mjs"), "utf8");
 assert.doesNotMatch(entry, /^\s*import\s+.+from\s+["'][^./]/mu, "plugin.mjs에는 bare import를 사용할 수 없습니다.");
@@ -71,10 +71,12 @@ assert.match(html, /익명으로 보내기/u);
 assert.match(html, /받는 사람에게만 익명이며, 운영상 발신자 정보는 서버에 보관됩니다/u);
 assert.match(html, /내가 부를 이름/u);
 assert.match(html, /Google 이름은 공개하지 않으며 이 별명만 친구에게 보입니다/u);
-assert.match(html, /id="profile-edit-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="profile-form"/u);
-assert.match(html, /id="profile-form" hidden/u, "공개 별명 입력은 기본 상태에서 숨겨야 합니다.");
-assert.match(html, /id="friend-add-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="friend-form"/u);
-assert.match(html, /id="friend-form"[^>]* hidden/u, "친구 추가 입력은 기본 상태에서 숨겨야 합니다.");
+assert.match(html, /id="manage-dialog"[^>]*role="dialog"[^>]*aria-modal="true"/u, "관리 입력은 modal dialog에 있어야 합니다.");
+assert.match(html, /id="invite-panel" hidden/u, "받은 초대 응답은 dialog 상세에서 처리해야 합니다.");
+assert.match(html, /id="friend-add-trigger"[^>]*aria-label="친구 추가"[^>]*title="친구 추가"/u);
+assert.match(html, /id="group-add-trigger"[^>]*aria-label="새 모임 만들기"[^>]*title="새 모임 만들기"/u);
+const manageView = html.match(/<section id="view-manage"[\s\S]*?<\/section>\s*<\/div>\s*<div id="manage-dialog-backdrop"/u)?.[0] || "";
+assert.doesNotMatch(manageView.replace(/<div id="manage-dialog-backdrop"[\s\S]*/u, ""), /<(?:input|select|textarea)\b/u, "관리 목록 바깥에는 입력 필드가 없어야 합니다.");
 assert.doesNotMatch(html, /type="file"|업로드/u, "스티커 업로드 UI를 제공하면 안 됩니다.");
 assert.doesNotMatch(html, /<textarea[^>]*maxlength=|id="group-name"[^>]*maxlength=/u, "Unicode codepoint 검증 필드에 maxlength를 사용하면 안 됩니다.");
 assert.doesNotMatch(html, /id="(?:friend-alias|profile-name)"[^>]*maxlength=/u, "이름 필드는 maxlength 대신 Unicode codepoint 검증을 사용해야 합니다.");
@@ -86,6 +88,7 @@ assert.match(css, /\.app-header\s*\{[^}]*-webkit-app-region:\s*drag/su, "상단 
 assert.match(css, /\.header-actions\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "헤더 버튼은 클릭 가능해야 합니다.");
 assert.match(css, /\.icon-button\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "개별 헤더 버튼도 이동 영역에서 제외해야 합니다.");
 assert.match(css, /\.app\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/su, "좁은 창에서도 목록과 배지가 가로로 잘리지 않아야 합니다.");
+assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.management-icon-action:hover\{background:#40354f;color:var\(--ink\)\}\.manage-avatar\{background:#40354f;color:var\(--ink\)\}\}/u, "dark mode 관리 아이콘은 4.5:1 이상 대비 색을 사용해야 합니다.");
 
 const ui = await readFile(resolve(root, "ui/friend-messages-ui.js"), "utf8");
 assert.doesNotMatch(ui, /\bfetch\s*\(/u, "네트워크 요청은 main-side에서만 해야 합니다.");
@@ -105,8 +108,12 @@ assert.match(ui, /const codepointLength = \(value\) => \[\.\.\.String\(value \|\
 assert.match(entry, /\[\\p\{Cc\}\\p\{Cf\}\]/u, "main 이름 검증은 Unicode Cc/Cf 문자를 거부해야 합니다.");
 assert.match(ui, /\[\\p\{Cc\}\\p\{Cf\}\]/u, "palette 이름 검증은 Unicode Cc/Cf 문자를 거부해야 합니다.");
 assert.match(ui, /setCustomValidity/u, "길이 초과는 브라우저 validation으로 알려야 합니다.");
-assert.match(ui, /friendAliasDraft/u, "친구 별칭 실패 시 입력 초안을 보존해야 합니다.");
-assert.match(ui, /message\.notice === "공개 별명을 바꿨어요\."/u, "프로필 편집기는 성공 notice 뒤에만 닫아야 합니다.");
+assert.match(ui, /role="dialog"|manage-dialog/u, "관리 상세는 dialog로 열려야 합니다.");
+assert.match(ui, /event\.key === "Escape"/u, "Escape로 dialog를 닫을 수 있어야 합니다.");
+assert.match(ui, /document\.activeElement/u, "dialog는 Tab 초점 순환을 관리해야 합니다.");
+assert.match(ui, /pendingDialogOperation\?\.operationId === message\.operationId/u, "편집기는 일치하는 요청 응답에만 반응해야 합니다.");
+assert.doesNotMatch(ui, /for \(const \[accept, label\][\s\S]*respondGroupInvite/u, "받은 초대 목록에 inline 수락·거절 버튼을 만들면 안 됩니다.");
+assert.match(ui, /kind: "invite-response", operationId/u, "초대 응답은 operationId pending lock을 사용해야 합니다.");
 
 await import(resolve(root, "dap_friend_messages/plugin.mjs"));
 console.log(`DAP Friend Messages 검증 완료 (${required.length}개 배포 파일)`);

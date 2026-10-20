@@ -474,12 +474,12 @@ export function activate(ctx) {
     expiryTimers.set(messageId, timer);
   };
 
-  const mutateFriend = async (action, friendId) => {
+  const mutateFriend = async (action, friendId, operationMeta = {}) => {
     const id = String(friendId || "");
     if (!state.friends.some((friend) => friend.id === id)) throw new Error("친구를 다시 선택해 주세요.");
     await request(BACKEND_ACTIONS[action], { friendId: id });
     await syncState();
-    pushState({ notice: action === "removeFriend" ? "친구를 삭제했어요." : action === "blockFriend" ? "친구를 차단했어요." : "차단을 해제했어요." });
+    pushState({ notice: action === "removeFriend" ? "친구를 삭제했어요." : action === "blockFriend" ? "친구를 차단했어요." : "차단을 해제했어요.", ...operationMeta });
   };
 
   const onPaletteMessage = async (message) => {
@@ -539,18 +539,19 @@ export function activate(ctx) {
         expireMessageAt(messageId, opened.expiresAt);
       } else if (["removeFriend", "blockFriend", "unblockFriend"].includes(message.type)) {
         const action = { removeFriend: "removeFriend", blockFriend: "blockFriend", unblockFriend: "unblockFriend" }[message.type];
-        await mutateFriend(action, message.friendId);
+        await mutateFriend(action, message.friendId, operationMeta);
       } else if (message.type === "createGroup") {
         const memberIds = [...new Set(Array.isArray(message.memberIds) ? message.memberIds.map(String) : [])];
         if (memberIds.length > GROUP_MAX_MEMBERS - 1 || memberIds.some((id) => !state.friends.some((friend) => friend.id === id && !friend.blocked))) throw new Error("모임원은 친구 중 최대 7명까지 선택할 수 있어요.");
         await request(BACKEND_ACTIONS.createGroup, { name: validateGroupName(message.name), memberIds });
         await syncState();
-        pushState({ notice: "모임을 만들었어요." });
+        pushState({ notice: "모임을 만들었어요.", ...operationMeta });
       } else if (message.type === "updateGroup") {
         const group = state.groups.find((item) => item.id === String(message.groupId || ""));
         if (!group?.owner) throw new Error("모임 이름은 모임장만 바꿀 수 있어요.");
         await request(BACKEND_ACTIONS.updateGroup, { groupId: group.id, name: validateGroupName(message.name) });
         await syncState();
+        pushState({ notice: "모임 이름을 바꿨어요.", ...operationMeta });
       } else if (message.type === "inviteGroup") {
         const group = state.groups.find((item) => item.id === String(message.groupId || ""));
         const memberIds = [...new Set(Array.isArray(message.memberIds) ? message.memberIds.map(String) : [])];
@@ -558,24 +559,29 @@ export function activate(ctx) {
         if (memberIds.length === 0 || group.members.length + memberIds.length > GROUP_MAX_MEMBERS) throw new Error("모임은 최대 8명까지 참여할 수 있어요.");
         await request(BACKEND_ACTIONS.inviteGroup, { groupId: group.id, memberIds });
         await syncState();
+        pushState({ notice: "모임에 초대했어요.", ...operationMeta });
       } else if (message.type === "respondGroupInvite") {
         await request(BACKEND_ACTIONS.respondGroupInvite, { inviteId: String(message.inviteId || ""), accept: message.accept === true });
         await syncState();
+        pushState({ notice: message.accept === true ? "모임 초대를 수락했어요." : "모임 초대를 거절했어요.", ...operationMeta });
       } else if (message.type === "removeGroupMember") {
         const group = state.groups.find((item) => item.id === String(message.groupId || ""));
         if (!group?.owner) throw new Error("모임원 내보내기는 모임장만 할 수 있어요.");
         await request(BACKEND_ACTIONS.removeGroupMember, { groupId: group.id, memberId: String(message.memberId || "") });
         await syncState();
+        pushState({ notice: "모임원을 내보냈어요.", ...operationMeta });
       } else if (message.type === "leaveGroup") {
         const group = state.groups.find((item) => item.id === String(message.groupId || ""));
         if (!group || group.owner) throw new Error("모임장은 모임을 나갈 수 없어요. 모임을 삭제해 주세요.");
         await request(BACKEND_ACTIONS.leaveGroup, { groupId: group.id });
         await syncState();
+        pushState({ notice: "모임에서 나왔어요.", ...operationMeta });
       } else if (message.type === "deleteGroup") {
         const group = state.groups.find((item) => item.id === String(message.groupId || ""));
         if (!group?.owner) throw new Error("모임 삭제는 모임장만 할 수 있어요.");
         await request(BACKEND_ACTIONS.deleteGroup, { groupId: group.id });
         await syncState();
+        pushState({ notice: "모임을 삭제했어요.", ...operationMeta });
       }
     } catch (error) {
       post({ type: "error", message: error instanceof Error ? error.message : "요청을 처리하지 못했어요.", ...operationMeta });
