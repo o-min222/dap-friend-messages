@@ -23,6 +23,11 @@ class FakeElement {
 }
 
 const allText = (node) => [node.textContent, ...node.children.map(allText)].join(" ");
+const relativeLuminance = (hex) => {
+  const channels = hex.match(/[0-9a-f]{2}/giu).map((part) => Number.parseInt(part, 16) / 255).map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+};
+const contrastRatio = (first, second) => { const values = [relativeLuminance(first), relativeLuminance(second)].sort((left, right) => right - left); return (values[0] + 0.05) / (values[1] + 0.05); };
 let harnessSequence = 0;
 
 async function harness() {
@@ -30,10 +35,10 @@ async function harness() {
   const ids = [
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread", "home-title",
     "invite-count", "message-list", "inbox-empty", "message-form", "composer-hint", "compose-recipient", "compose-back",
-    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "my-code", "friend-add-trigger", "friend-form", "friend-code",
-    "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-row", "profile-form", "profile-name", "profile-current-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
-    "invite-section", "invite-list", "group-add-trigger", "group-form", "group-name", "group-friend-options", "group-create-submit", "group-create-cancel", "group-list", "group-empty",
-    "manage-dialog-backdrop", "manage-dialog", "manage-dialog-title", "manage-dialog-close", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel", "compose-panel",
+    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "manage-title", "friends-title", "groups-title", "manage-menu-trigger", "my-code", "friend-form", "friend-code",
+    "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-form", "profile-name", "profile-current-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
+    "group-form", "group-name", "group-friend-options", "group-create-submit", "group-create-cancel", "group-list", "group-empty",
+    "manage-dialog-backdrop", "manage-dialog", "manage-dialog-title", "manage-dialog-back", "manage-dialog-close", "menu-panel", "menu-profile", "menu-friend-add", "menu-group-add", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel", "compose-panel",
     "friend-detail-name", "friend-detail-status", "friend-message", "friend-alias-form", "friend-detail-alias", "friend-alias-save", "friend-alias-reset", "friend-block", "friend-remove",
     "group-detail-name", "group-detail-status", "group-message", "group-rename-form", "group-rename-name", "group-rename-save", "group-invite-controls", "group-invite-select", "group-invite-button", "group-member-list", "group-leave", "group-delete",
     "invite-panel", "invite-detail-name", "invite-detail-status", "invite-accept", "invite-decline",
@@ -77,7 +82,7 @@ const openFriendCompose = (view, friendIndex = 0) => {
 
 const openGroupCompose = (view, groupIndex = 0) => {
   view.elements["tab-manage"].onclick();
-  view.elements["group-list"].children[groupIndex].children[0].onclick();
+  view.elements["group-list"].children[groupIndex + 1].children[0].onclick();
   view.elements["group-message"].onclick();
 };
 
@@ -209,13 +214,49 @@ test("HTML은 상세 depth 없이 받은 목록과 dialog 작성기만 가지며
   assert.match(html, /id="compose-panel"[^>]*hidden/u); assert.match(html, /id="group-message"[^>]*>모임 전체에 쪽지 보내기/u);
   const home = html.slice(html.indexOf('<section id="view-home"'), html.indexOf('<section id="view-manage"'));
   assert.doesNotMatch(home, /friend-list|group-list|message-form|textarea/u);
+  const manage = html.slice(html.indexOf('<section id="view-manage"'), html.indexOf('<div id="manage-dialog-backdrop"'));
+  assert.match(manage, /id="manage-title"[^>]*>관리<\/h2>[\s\S]*id="manage-menu-trigger"[^>]*aria-label="관리 메뉴"/u);
+  assert.match(manage, /<h3 id="friends-title"[^>]*>친구<\/h3>[\s\S]*<ul id="friend-list"/u); assert.match(manage, /<h3 id="groups-title"[^>]*>모임<\/h3>[\s\S]*<ul id="group-list"/u);
+  assert.doesNotMatch(manage, /profile-row|friend-add-trigger|group-add-trigger|invite-section|invite-list|<(?:input|select|textarea|form)\b/u);
+  assert.equal(manage.match(/<button\b/gu)?.length, 1);
+  assert.match(html, /id="menu-panel" hidden[\s\S]*id="menu-profile"[\s\S]*id="menu-friend-add"[\s\S]*id="menu-group-add"/u);
   assert.match(css, /\.composer-bar\{[^}]*grid-template-columns:44px minmax\(0,1fr\) 44px 44px/su); assert.match(css, /@media\(max-width:395px\)/u); assert.doesNotMatch(css, /transition:\s*all/u);
 });
 
-test("관리 목록과 초대 dialog의 기존 접근성 흐름을 유지한다", async () => {
+test("dark primary button은 기본·disabled 상태 모두 읽기 쉬운 대비를 유지한다", async () => {
+  const css = await readFile(new URL("../ui/friend-messages.css", import.meta.url), "utf8");
+  assert.match(css, /@media\(prefers-color-scheme:dark\)\{[^}]*--accent:#a68bd3[^}]*\}\.primary-button\{color:#191817\}\.primary-button:disabled\{opacity:1;background:#6f657b;color:#f5f0e8\}/u);
+  assert.ok(contrastRatio("#a68bd3", "#191817") >= 4.5); assert.ok(contrastRatio("#6f657b", "#f5f0e8") >= 4.5);
+});
+
+test("관리 첫 화면은 친구·모임 목록만 보이고 초대도 모임 행으로 연다", async () => {
   const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next }); view.elements["tab-manage"].onclick();
-  assert.equal(view.elements["friend-list"].children.length, 2); assert.equal(view.elements["group-list"].children.length, 1); assert.equal(view.elements["invite-list"].children.length, 1);
-  view.elements["invite-list"].children[0].children[0].onclick(); assert.equal(view.elements["invite-panel"].hidden, false); assert.equal(view.elements["invite-accept"].focused, true);
+  assert.equal(view.elements["friend-list"].children.length, 2); assert.equal(view.elements["group-list"].children.length, 2);
+  assert.match(allText(view.elements["group-list"].children[0]), /점심 모임.*초대 · 구름님이 초대.*초대/u);
+  view.elements["group-list"].children[0].children[0].onclick(); assert.equal(view.elements["invite-panel"].hidden, false); assert.equal(view.elements["invite-accept"].focused, true);
   view.elements["invite-accept"].onclick(); const id = view.sent.at(-1).operationId; const count = view.sent.length; view.elements["invite-accept"].onclick(); assert.equal(view.sent.length, count);
   view.onMessage({ type: "error", message: "실패", operationId: id }); assert.equal(view.elements["invite-panel"].hidden, false); assert.equal(view.elements["invite-accept"].disabled, false);
+});
+
+test("관리 메뉴는 profile·추가·생성을 같은 dialog에서 전환하고 focus를 복원한다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next }); view.elements["tab-manage"].onclick();
+  view.elements["manage-menu-trigger"].onclick();
+  assert.equal(view.elements["menu-panel"].hidden, false); assert.equal(view.elements["my-code"].textContent, "A1B2C3"); assert.equal(view.document.activeElement, view.elements["menu-profile"]);
+  view.elements["menu-profile"].onclick(); assert.equal(view.elements["profile-panel"].hidden, false); assert.equal(view.elements["manage-dialog-back"].hidden, false); assert.equal(view.document.activeElement, view.elements["profile-name"]);
+  view.elements["profile-name"].value = "수정 중"; view.onMessage({ type: "state", state: next }); assert.equal(view.elements["profile-name"].value, "수정 중");
+  view.elements["manage-dialog-back"].onclick(); assert.equal(view.elements["menu-panel"].hidden, false); assert.equal(view.document.activeElement, view.elements["menu-profile"]);
+  let trapped = false; view.elements["menu-group-add"].focus(); view.elements["manage-dialog"].listeners.keydown({ key: "Tab", shiftKey: false, preventDefault() { trapped = true; } });
+  assert.equal(trapped, true); assert.equal(view.document.activeElement, view.elements["manage-dialog-close"]);
+  view.elements["manage-dialog"].listeners.keydown({ key: "Escape", preventDefault() {} }); assert.equal(view.elements["manage-dialog-backdrop"].hidden, true); assert.equal(view.document.activeElement, view.elements["manage-menu-trigger"]);
+});
+
+test("관리 polling은 행 identity와 focus를 유지하고 사라진 초대는 모임 제목으로 복원한다", async () => {
+  const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next }); view.elements["tab-manage"].onclick();
+  const friendItem = view.elements["friend-list"].children[1]; const friendButton = friendItem.children[0]; friendButton.focus();
+  view.onMessage({ type: "state", state: next }); assert.equal(view.elements["friend-list"].children[1], friendItem); assert.equal(friendItem.children[0], friendButton); assert.equal(view.document.activeElement, friendButton);
+  next.friends[1] = { ...next.friends[1], name: "아주 길게 바뀐 친구 이름" }; view.onMessage({ type: "state", state: next });
+  assert.equal(view.elements["friend-list"].children[1], friendItem); assert.notEqual(friendItem.children[0], friendButton); assert.equal(view.document.activeElement, friendItem.children[0]);
+  view.elements["group-list"].children[0].children[0].onclick(); view.elements["invite-accept"].onclick(); const operationId = view.sent.at(-1).operationId;
+  next.groupInvites = []; view.onMessage({ type: "state", state: next, operationId, notice: "초대를 수락했어요." });
+  assert.equal(view.elements["group-list"].children.length, 1); assert.equal(view.document.activeElement, view.elements["groups-title"]);
 });
