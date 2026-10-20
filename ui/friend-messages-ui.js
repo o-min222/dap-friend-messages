@@ -6,11 +6,11 @@
   const ids = [
     "app", "connect-panel", "connect-google", "workspace", "refresh", "close", "status", "nav-unread", "home-title",
     "invite-count", "message-list", "inbox-empty", "message-form", "composer-hint", "compose-recipient", "compose-back",
-    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "manage-title", "manage-menu-trigger", "profile-row", "profile-current-name", "my-code", "manage-tab-friends", "manage-tab-groups", "group-invite-count", "friends-panel", "groups-panel", "friend-form", "friend-code",
+    "sticker-tray", "sticker-toggle", "sticker-grid", "message-body", "anonymous-toggle", "counter", "send", "manage-title", "manage-menu-trigger", "profile-row", "profile-current-name", "profile-view", "profile-display-name", "profile-code-value", "profile-code-copy", "profile-copy-status", "profile-edit", "manage-tab-friends", "manage-tab-groups", "group-invite-count", "friends-panel", "groups-panel", "friend-form", "friend-code",
     "friend-alias", "friend-add-submit", "friend-add-cancel", "profile-form", "profile-name", "profile-save", "profile-cancel", "friend-list", "friend-empty",
     "group-form", "group-name", "group-friend-options", "group-create-submit", "group-create-cancel", "group-list", "group-empty",
     "manage-dialog-backdrop", "manage-dialog", "manage-dialog-title", "manage-dialog-back", "manage-dialog-close", "menu-panel", "menu-friend-add", "menu-group-add", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel",
-    "friend-detail-name", "friend-detail-status", "friend-message", "friend-alias-form", "friend-detail-alias", "friend-alias-save", "friend-alias-reset", "friend-block", "friend-remove",
+    "friend-detail-name", "friend-detail-status", "friend-message", "friend-alias-edit", "friend-alias-form", "friend-detail-alias", "friend-alias-save", "friend-alias-reset", "friend-alias-cancel", "friend-block", "friend-remove",
     "group-detail-name", "group-detail-status", "group-message", "group-rename-form", "group-rename-name", "group-rename-save", "group-invite-controls", "group-invite-select", "group-invite-button", "group-member-list", "group-leave", "group-delete",
     "invite-panel", "invite-detail-name", "invite-detail-status", "invite-accept", "invite-decline", "compose-panel",
     ...viewNames.flatMap((name) => [`tab-${name}`, `view-${name}`]),
@@ -44,6 +44,8 @@
   let dialogFocusables = [];
   let menuReturnFocusId = "";
   let pendingDialogOperation = null;
+  let profileEditing = false;
+  let friendAliasEditing = false;
   let groupFriendInputs = new Map();
   let groupMemberButtons = new Map();
   let operationSequence = 0;
@@ -53,6 +55,28 @@
   const nextOperationId = () => `palette-${operationSessionId}-${++operationSequence}`;
 
   const send = (message) => bridge?.postMessage?.(message);
+  const fallbackCopy = (value) => {
+    const previousFocus = document.activeElement;
+    const input = el("textarea"); input.value = value; input.setAttribute("aria-hidden", "true"); input.style.position = "fixed"; input.style.opacity = "0";
+    document.body?.append?.(input); input.select?.();
+    try { return document.execCommand?.("copy") === true; }
+    finally { input.remove?.(); previousFocus?.focus?.(); }
+  };
+  const copyProfileCode = async () => {
+    const code = String(model.me?.code || "");
+    if (!code) { elements["profile-copy-status"].textContent = "복사할 친구 코드가 없어요."; return; }
+    try {
+      try {
+        if (!globalThis.navigator?.clipboard?.writeText) throw new Error("clipboard unavailable");
+        await globalThis.navigator.clipboard.writeText(code);
+      } catch {
+        if (!fallbackCopy(code)) throw new Error("copy failed");
+      }
+      elements["profile-copy-status"].textContent = "친구 코드를 복사했어요.";
+    } catch {
+      elements["profile-copy-status"].textContent = "복사하지 못했어요. 코드를 길게 눌러 직접 복사해 주세요.";
+    }
+  };
   const codepointLength = (value) => [...String(value || "")].length;
   const nameForbiddenPattern = /[\p{Cc}\p{Cf}]/u;
   const updateLengthValidity = (input, max, label) => {
@@ -242,6 +266,7 @@
   function closeManageDialog(restoreFocus = true) {
     const triggerKey = dialogTriggerKey;
     dialogKind = null; dialogEntityId = ""; dialogTriggerKey = ""; dialogFocusables = []; menuReturnFocusId = ""; pendingDialogOperation = null;
+    profileEditing = false; friendAliasEditing = false;
     removeArmedFriendId = null; deleteArmedGroupId = null; removeArmedMemberKey = null; leaveArmedGroupId = null;
     elements["manage-dialog-backdrop"].hidden = true;
     for (const id of ["menu-panel", "profile-panel", "friend-add-panel", "friend-panel", "group-create-panel", "group-panel", "invite-panel", "compose-panel"]) elements[id].hidden = true;
@@ -279,10 +304,14 @@
       firstFocus = menuReturnFocusId ? elements[menuReturnFocusId] : elements["menu-friend-add"];
     } else if (dialogKind === "profile") {
       elements["profile-panel"].hidden = false; elements["manage-dialog-title"].textContent = "내 프로필";
-      if (initial) elements["profile-name"].value = model.me?.nameCustomized ? model.me.name : "";
-      updateNameValidity(elements["profile-name"], "공개 별명", true);
-      elements["profile-save"].disabled = Boolean(pendingDialogOperation);
-      setDialogFocusables([elements["profile-name"], elements["profile-save"], elements["profile-cancel"]]); firstFocus = elements["profile-name"];
+      elements["profile-display-name"].textContent = model.me?.name || "설정 전"; elements["profile-code-value"].textContent = model.me?.code || "------";
+      elements["profile-view"].hidden = profileEditing; elements["profile-form"].hidden = !profileEditing;
+      if (profileEditing) {
+        updateNameValidity(elements["profile-name"], "내 이름", true); elements["profile-save"].disabled = Boolean(pendingDialogOperation);
+        setDialogFocusables([elements["profile-name"], elements["profile-save"], elements["profile-cancel"]]); firstFocus = elements["profile-name"];
+      } else {
+        setDialogFocusables([elements["profile-code-copy"], elements["profile-edit"]]); firstFocus = elements["profile-code-copy"];
+      }
     } else if (dialogKind === "friend-add") {
       elements["friend-add-panel"].hidden = false; elements["manage-dialog-title"].textContent = "친구 추가";
       if (initial) { elements["friend-code"].value = ""; elements["friend-alias"].value = ""; }
@@ -293,14 +322,15 @@
       if (!friend) return closeManageDialog(true);
       const publicName = friend.publicName || friend.name || "친구";
       elements["friend-panel"].hidden = false; elements["manage-dialog-title"].textContent = "친구 상세";
-      elements["friend-detail-name"].textContent = friend.name; elements["friend-detail-status"].textContent = `${friend.hasAlias ? `공개 별명 ${publicName}` : "친구의 공개 별명"}${friend.blocked ? " · 차단됨" : ""}`;
-      if (initial) elements["friend-detail-alias"].value = friend.hasAlias ? friend.alias || friend.name : "";
-      updateNameValidity(elements["friend-detail-alias"], "친구 별칭");
-      elements["friend-message"].disabled = friend.blocked; elements["friend-alias-save"].disabled = Boolean(pendingDialogOperation); elements["friend-alias-reset"].disabled = Boolean(pendingDialogOperation); elements["friend-alias-reset"].hidden = !friend.hasAlias;
+      const friendStatus = [friend.hasAlias && friend.name !== publicName ? `친구가 정한 이름 · ${publicName}` : "", friend.blocked ? "차단됨" : ""].filter(Boolean).join(" · ");
+      elements["friend-detail-name"].textContent = friend.name; elements["friend-detail-status"].textContent = friendStatus;
+      elements["friend-alias-form"].hidden = !friendAliasEditing;
+      if (friendAliasEditing) updateNameValidity(elements["friend-detail-alias"], "친구 별칭");
+      elements["friend-message"].disabled = friend.blocked; elements["friend-alias-edit"].hidden = friendAliasEditing; elements["friend-alias-edit"].disabled = Boolean(pendingDialogOperation); elements["friend-alias-save"].disabled = Boolean(pendingDialogOperation); elements["friend-alias-reset"].disabled = Boolean(pendingDialogOperation); elements["friend-alias-reset"].hidden = !friend.hasAlias;
       elements["friend-block"].textContent = friend.blocked ? "차단 해제" : "차단"; elements["friend-block"].disabled = Boolean(pendingDialogOperation);
       const armed = removeArmedFriendId === friend.id; elements["friend-remove"].textContent = armed ? "삭제 확정" : "친구 삭제"; elements["friend-remove"].setAttribute("aria-label", armed ? `${friend.name} 삭제 확정` : `${friend.name} 삭제 확인`);
       elements["friend-remove"].disabled = Boolean(pendingDialogOperation);
-      setDialogFocusables([elements["friend-message"], elements["friend-detail-alias"], elements["friend-alias-save"], elements["friend-alias-reset"], elements["friend-block"], elements["friend-remove"]]);
+      setDialogFocusables([elements["friend-message"], elements["friend-alias-edit"], ...(friendAliasEditing ? [elements["friend-detail-alias"], elements["friend-alias-save"], elements["friend-alias-reset"], elements["friend-alias-cancel"]] : []), elements["friend-block"], elements["friend-remove"]]); firstFocus = elements["friend-message"];
     } else if (dialogKind === "group-create") {
       elements["group-create-panel"].hidden = false; elements["manage-dialog-title"].textContent = "새 모임 만들기";
       if (initial) { elements["group-name"].value = ""; groupMemberIds = new Set(); }
@@ -358,7 +388,9 @@
 
   function openManageDialog(kind, entityId, triggerKey) {
     dialogKind = kind; dialogEntityId = entityId || ""; dialogTriggerKey = triggerKey; menuReturnFocusId = ""; pendingDialogOperation = null;
+    profileEditing = false; friendAliasEditing = false;
     removeArmedFriendId = null; deleteArmedGroupId = null; removeArmedMemberKey = null; leaveArmedGroupId = null;
+    if (kind === "profile") elements["profile-copy-status"].textContent = "";
     renderManageDialog(true);
   }
 
@@ -391,9 +423,9 @@
     const focusedEntry = [...manageRecords].find(([, record]) => record.button === document.activeElement);
     const focusedKey = focusedEntry?.[0] || ""; const focusedList = focusedEntry?.[1].item.parentNode;
     const focusedIndex = focusedList ? [...focusedList.children].indexOf(focusedEntry[1].item) : -1;
-    elements["profile-current-name"].textContent = model.me?.name || "설정 전"; elements["my-code"].textContent = model.me?.code || "------";
+    elements["profile-current-name"].textContent = model.me?.name || "설정 전";
     const friendRows = model.friends.map((friend) => {
-      const publicName = friend.publicName || friend.name || "친구"; const detail = `${friend.hasAlias ? `공개 별명 ${publicName}` : "친구의 공개 별명"}${friend.blocked ? " · 차단됨" : ""}`;
+      const detail = friend.blocked ? "차단됨" : "";
       const key = `friend:${friend.id}`;
       return { key, name: friend.name, detail, avatar: "☺", label: `${friend.name} 친구 상세 열기`, signature: JSON.stringify([friend.name, detail]), onOpen: () => openManageDialog("friend", friend.id, key) };
     });
@@ -409,7 +441,8 @@
     const placeRows = (list, descriptors) => descriptors.forEach((descriptor, index) => { const item = manageRecords.get(descriptor.key).item; if (list.children[index] !== item) list.insertBefore(item, list.children[index] || null); });
     placeRows(elements["friend-list"], friendRows); placeRows(elements["group-list"], [...inviteRows, ...groupRows]);
     elements["friend-empty"].hidden = friendRows.length > 0; elements["group-empty"].hidden = inviteRows.length + groupRows.length > 0;
-    for (const badge of [elements["invite-count"], elements["group-invite-count"]]) { badge.textContent = String(inviteRows.length); badge.hidden = inviteRows.length === 0; }
+    elements["invite-count"].textContent = String(inviteRows.length); elements["invite-count"].hidden = inviteRows.length === 0;
+    elements["group-invite-count"].textContent = inviteRows.length > 9 ? "9+" : String(inviteRows.length); elements["group-invite-count"].hidden = inviteRows.length === 0;
     if (dialogKind) renderManageDialog(false);
     else if (focusedKey && manageRecords.has(focusedKey) && document.activeElement !== manageRecords.get(focusedKey).button) manageRecords.get(focusedKey).button.focus?.();
     else if (focusedKey && !manageRecords.has(focusedKey)) {
@@ -446,7 +479,9 @@
   elements["menu-group-add"].onclick = () => openMenuChild("group-create", "menu-group-add");
   elements["manage-dialog-back"].onclick = returnToManageMenu;
   elements["manage-dialog-close"].onclick = () => closeManageDialog(true);
-  elements["profile-cancel"].onclick = () => closeManageDialog(true);
+  elements["profile-code-copy"].onclick = copyProfileCode;
+  elements["profile-edit"].onclick = () => { if (pendingDialogOperation) return; profileEditing = true; elements["profile-name"].value = model.me?.nameCustomized ? model.me.name : ""; renderManageDialog(false); elements["profile-name"].focus?.(); };
+  elements["profile-cancel"].onclick = () => { if (pendingDialogOperation) return; profileEditing = false; elements["profile-name"].setCustomValidity?.(""); elements["profile-name"].setAttribute("aria-invalid", "false"); renderManageDialog(false); elements["profile-edit"].focus?.(); };
   elements["friend-add-cancel"].onclick = () => closeManageDialog(true);
   elements["group-create-cancel"].onclick = () => closeManageDialog(true);
   elements["manage-dialog"].addEventListener("keydown", (event) => {
@@ -464,10 +499,12 @@
   elements["group-rename-name"].addEventListener("input", () => updateLengthValidity(elements["group-rename-name"], 30, "모임 이름"));
   elements["friend-alias"].addEventListener("input", () => updateNameValidity(elements["friend-alias"], "친구 별칭"));
   elements["friend-detail-alias"].addEventListener("input", () => updateNameValidity(elements["friend-detail-alias"], "친구 별칭"));
-  elements["profile-name"].addEventListener("input", () => updateNameValidity(elements["profile-name"], "공개 별명", true));
+  elements["profile-name"].addEventListener("input", () => updateNameValidity(elements["profile-name"], "내 이름", true));
+  elements["friend-alias-edit"].onclick = () => { if (pendingDialogOperation) return; const friend = model.friends.find((item) => item.id === dialogEntityId); if (!friend) return; friendAliasEditing = true; elements["friend-detail-alias"].value = friend.hasAlias ? friend.alias || friend.name : ""; renderManageDialog(false); elements["friend-detail-alias"].focus?.(); };
+  elements["friend-alias-cancel"].onclick = () => { if (pendingDialogOperation) return; friendAliasEditing = false; elements["friend-detail-alias"].setCustomValidity?.(""); elements["friend-detail-alias"].setAttribute("aria-invalid", "false"); renderManageDialog(false); elements["friend-alias-edit"].focus?.(); };
   elements["friend-code"].addEventListener("input", () => { elements["friend-code"].value = elements["friend-code"].value.toUpperCase().replace(/[^A-F0-9]/gu, "").slice(0, 6); });
   elements["friend-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateNameValidity(elements["friend-alias"], "친구 별칭")) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "friend-add", operationId }; send({ type: "addFriend", code: elements["friend-code"].value, alias: elements["friend-alias"].value, operationId }); renderManageDialog(false); });
-  elements["profile-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateNameValidity(elements["profile-name"], "공개 별명", true)) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "profile", operationId }; send({ type: "updateProfileName", name: elements["profile-name"].value, operationId }); renderManageDialog(false); });
+  elements["profile-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateNameValidity(elements["profile-name"], "내 이름", true)) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "profile", operationId }; send({ type: "updateProfileName", name: elements["profile-name"].value, operationId }); renderManageDialog(false); });
   elements["friend-alias-form"].addEventListener("submit", (event) => { event.preventDefault(); if (pendingDialogOperation || !updateNameValidity(elements["friend-detail-alias"], "친구 별칭")) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "friend-alias", operationId }; send({ type: "updateFriendAlias", friendId: dialogEntityId, alias: elements["friend-detail-alias"].value, operationId }); renderManageDialog(false); });
   elements["friend-alias-reset"].onclick = () => { if (pendingDialogOperation) return; const operationId = nextOperationId(); pendingDialogOperation = { kind: "friend-alias", operationId }; send({ type: "updateFriendAlias", friendId: dialogEntityId, alias: null, operationId }); renderManageDialog(false); };
   elements["friend-message"].onclick = () => { const friend = model.friends.find((item) => item.id === dialogEntityId); if (!friend || friend.blocked) return; openComposer({ type: "friend", id: friend.id, name: friend.name }, "friend"); };
@@ -497,7 +534,9 @@
       if (shouldResetSentDraft) { resetComposer(); if (sentComposeStillOpen) { dialogKind = composeReturnKind; renderManageDialog(false); elements[composeReturnKind === "friend" ? "friend-message" : "group-message"].focus?.(); } }
       if (completedDialogOperation) {
         pendingDialogOperation = null;
-        if (["profile", "friend-add", "friend-alias", "group-create", "friend-remove", "group-delete", "group-leave", "invite-response"].includes(completedDialogOperation.kind)) { if (dialogKind) closeManageDialog(true); }
+        if (completedDialogOperation.kind === "profile" && dialogKind === "profile") { profileEditing = false; renderManageDialog(false); elements["profile-edit"].focus?.(); }
+        else if (completedDialogOperation.kind === "friend-alias" && dialogKind === "friend") { friendAliasEditing = false; renderManageDialog(false); elements["friend-alias-edit"].focus?.(); }
+        else if (["friend-add", "group-create", "friend-remove", "group-delete", "group-leave", "invite-response"].includes(completedDialogOperation.kind)) { if (dialogKind) closeManageDialog(true); }
         else { if (completedDialogOperation.kind === "group-invite") elements["group-invite-select"].value = ""; renderManageDialog(false); }
       }
     } else if (message?.type === "error") {
@@ -505,9 +544,11 @@
       if (pendingDialogOperation?.operationId === message.operationId) pendingDialogOperation = null;
       elements.status.textContent = message.message;
       renderManageDialog(false);
-      if (dialogKind === "profile") elements["profile-name"].focus?.();
+      if (dialogKind === "profile" && profileEditing) elements["profile-name"].focus?.();
+      else if (dialogKind === "profile") elements["profile-edit"].focus?.();
       else if (dialogKind === "friend-add") elements["friend-code"].focus?.();
-      else if (dialogKind === "friend") elements["friend-detail-alias"].focus?.();
+      else if (dialogKind === "friend" && friendAliasEditing) elements["friend-detail-alias"].focus?.();
+      else if (dialogKind === "friend") elements["friend-message"].focus?.();
       else if (dialogKind === "group-create") elements["group-name"].focus?.();
       else if (dialogKind === "group") elements["group-rename-name"].focus?.();
       else if (dialogKind === "invite") elements["invite-accept"].focus?.();

@@ -77,10 +77,10 @@ function validateFriendAlias(value) {
 
 function validateProfileName(value) {
   const raw = String(value || "");
-  if (NAME_FORBIDDEN_PATTERN.test(raw)) throw new Error("공개 별명에는 제어 문자를 사용할 수 없어요.");
+  if (NAME_FORBIDDEN_PATTERN.test(raw)) throw new Error("내 이름에는 제어 문자를 사용할 수 없어요.");
   const name = raw.trim();
-  if (!name) throw new Error("친구에게 보여 줄 공개 별명을 입력해 주세요.");
-  if ([...name].length > DISPLAY_NAME_MAX_LENGTH) throw new Error("공개 별명은 20자까지 사용할 수 있어요.");
+  if (!name) throw new Error("내 이름을 입력해 주세요.");
+  if ([...name].length > DISPLAY_NAME_MAX_LENGTH) throw new Error("내 이름은 20자까지 사용할 수 있어요.");
   return name;
 }
 
@@ -504,11 +504,11 @@ export function activate(ctx) {
         const alias = validateFriendAlias(message.alias);
         await request(BACKEND_ACTIONS.updateFriendAlias, { friendId, alias });
         await syncState();
-        pushState({ notice: alias ? "친구 별칭을 바꿨어요." : "공개 별명으로 되돌렸어요.", ...operationMeta });
+        pushState({ notice: alias ? "친구 이름을 바꿨어요." : "친구가 정한 이름을 사용해요.", ...operationMeta });
       } else if (message.type === "updateProfileName") {
         await request(BACKEND_ACTIONS.updateProfileName, { displayName: validateProfileName(message.name) });
         await syncState();
-        pushState({ notice: "공개 별명을 바꿨어요.", ...operationMeta });
+        pushState({ notice: "내 이름을 바꿨어요.", ...operationMeta });
       } else if (message.type === "sendMessage") {
         const targetType = message.targetType === "group" ? "group" : "friend";
         const targetId = String(message.targetId || "");

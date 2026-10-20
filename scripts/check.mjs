@@ -21,7 +21,7 @@ for (const path of required) assert.ok((await stat(resolve(root, path))).isFile(
 const manifest = await readFile(resolve(root, "plugin.yaml"), "utf8");
 for (const line of [
   "id: dap.friend_messages",
-  "version: 0.10.1",
+  "version: 0.11.0",
   "entry: dap_friend_messages.plugin:activate",
   "min_app_version: 1.4.0",
   "  - window.palette",
@@ -29,7 +29,7 @@ for (const line of [
 ]) assert.ok(manifest.includes(line), `plugin.yaml에 '${line}'이 필요합니다.`);
 assert.doesNotMatch(manifest, /storage\.private/u, "메모리 세션만 사용하므로 storage.private 권한이 없어야 합니다.");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-assert.equal(packageJson.version, "0.10.1", "plugin.yaml과 package.json 버전이 같아야 합니다.");
+assert.equal(packageJson.version, "0.11.0", "plugin.yaml과 package.json 버전이 같아야 합니다.");
 
 const entry = await readFile(resolve(root, "dap_friend_messages/plugin.mjs"), "utf8");
 assert.doesNotMatch(entry, /^\s*import\s+.+from\s+["'][^./]/mu, "plugin.mjs에는 bare import를 사용할 수 없습니다.");
@@ -70,21 +70,29 @@ assert.match(html, /bottom-nav-icon" aria-hidden="true"><svg[^>]*focusable="fals
 assert.match(html, /id="home-title" tabindex="-1">쪽지/u, "쪽지 목록 focus fallback 대상이 있어야 합니다.");
 assert.match(html, /id="message-list"[^>]*aria-live="polite"[^>]*aria-relevant="additions removals"[^>]*aria-atomic="false"/u, "쪽지 목록은 반복 전체 낭독을 줄이는 live-region 설정이어야 합니다.");
 assert.match(html, /id="manage-title" tabindex="-1">친구/u);
-assert.match(html, /id="profile-row"[\s\S]*내 프로필 · 눌러서 수정[\s\S]*id="my-code"[\s\S]*class="manage-segments" role="tablist"/u, "프로필 행은 세부 탭보다 먼저 보여야 합니다.");
-assert.doesNotMatch(html, /id="profile-row"[^>]*aria-label=/u, "프로필 행의 보이는 이름과 친구 코드가 접근 가능한 이름에서 가려지면 안 됩니다.");
+const manageSummary = html.match(/<section id="view-manage"[\s\S]*?<nav class="bottom-nav"/u)?.[0] || "";
+assert.match(manageSummary, /id="profile-row"[\s\S]*id="profile-current-name"[\s\S]*class="manage-segments" role="tablist"/u, "간결한 프로필 행은 세부 탭보다 먼저 보여야 합니다.");
+assert.doesNotMatch(manageSummary, /눌러서 수정|내 코드/u, "목록 프로필 행에는 장황한 안내나 친구 코드를 상시 노출하면 안 됩니다.");
+assert.doesNotMatch(html, /id="profile-row"[^>]*aria-label=/u, "프로필 행의 보이는 이름이 접근 가능한 이름에서 가려지면 안 됩니다.");
+assert.match(manageSummary, /id="profile-row"[\s\S]*class="sr-only">내 프로필<[\s\S]*id="profile-current-name"/u, "간결한 프로필 행도 보조기기에 내 프로필 맥락과 현재 이름을 함께 전달해야 합니다.");
 assert.match(html, /id="manage-tab-friends"[^>]*role="tab"[^>]*aria-selected="true"[^>]*aria-controls="friends-panel"/u);
 assert.match(html, /id="manage-tab-groups"[^>]*role="tab"[^>]*aria-selected="false"[^>]*aria-controls="groups-panel"/u);
+assert.equal(html.match(/class="manage-segment-icon" aria-hidden="true"><svg[^>]*focusable="false"/gu)?.length, 2, "친구·모임 탭에는 각각 장식용 SVG 아이콘이 필요합니다.");
 assert.match(html, /id="friends-panel"[^>]*role="tabpanel"[^>]*aria-labelledby="manage-tab-friends"/u);
 assert.match(html, /id="groups-panel"[^>]*role="tabpanel"[^>]*aria-labelledby="manage-tab-groups"[^>]*hidden/u);
 assert.match(html, /익명으로 보내기/u);
 assert.match(html, /받는 사람에게만 익명이며, 운영상 발신자 정보는 서버에 보관됩니다/u);
 assert.match(html, /내가 부를 이름/u);
-assert.match(html, /Google 이름은 공개하지 않으며 이 별명만 친구에게 보입니다/u);
+assert.match(html, /id="profile-edit"[^>]*>이름 수정<[\s\S]*id="profile-form"[^>]*hidden[\s\S]*<label>내 이름/u, "프로필은 짧은 사용자 용어로 조회와 편집을 구분해야 합니다.");
+assert.doesNotMatch(html, /<small>공개 별명<|Google 이름은 공개하지 않으며|비워서 저장하거나|공개 이름 사용/u, "프로필과 친구 상세에 별명 동작 설명을 상시 노출하면 안 됩니다.");
 assert.match(html, /id="manage-dialog"[^>]*role="dialog"[^>]*aria-modal="true"/u, "관리 입력은 modal dialog에 있어야 합니다.");
 assert.match(html, /id="invite-panel" hidden/u, "받은 초대 응답은 dialog 상세에서 처리해야 합니다.");
 assert.match(html, /id="manage-menu-trigger"[^>]*aria-label="관리 메뉴"[^>]*title="관리 메뉴"/u);
 assert.match(html, /id="menu-panel" hidden[\s\S]*id="menu-friend-add"[\s\S]*id="menu-group-add"/u, "친구 추가·모임 생성은 관리 메뉴 안에 있어야 합니다.");
 assert.doesNotMatch(html, /id="menu-profile"/u, "프로필은 관리 메뉴에 중복 노출하면 안 됩니다.");
+assert.match(html, /id="profile-view"[\s\S]*id="profile-code-value"[^>]*translate="no"[\s\S]*id="profile-code-copy"[\s\S]*id="profile-copy-status"[^>]*role="status"[^>]*aria-live="polite"[\s\S]*id="profile-form"[^>]*hidden/u, "프로필은 조회 우선이며 코드 복사 결과를 알려야 합니다.");
+assert.match(html, /id="friend-alias-edit"[\s\S]*id="friend-alias-form"[^>]*hidden[\s\S]*id="friend-alias-reset"[\s\S]*id="friend-alias-cancel"/u, "친구 별칭 입력은 이름 바꾸기 뒤에만 보여야 합니다.");
+assert.match(html, /id="friend-alias-reset"[^>]*>친구가 정한 이름 사용</u, "친구 이름 복원 액션은 짧고 사실적인 문구를 사용해야 합니다.");
 assert.match(html, /id="compose-panel"[^>]*hidden/u, "보내기는 관리 dialog 안에서 시작해야 합니다.");
 assert.match(html, /id="group-message"[^>]*>모임 전체에 쪽지 보내기/u);
 const manageView = html.match(/<section id="view-manage"[\s\S]*?<\/section>\s*<\/div>\s*<div id="manage-dialog-backdrop"/u)?.[0] || "";
@@ -106,8 +114,14 @@ assert.match(css, /\.bottom-nav-item\.active \.bottom-nav-icon\{background:#eee6
 assert.match(css, /\.bottom-nav-item:focus-visible\{outline:3px solid #b8514e/u, "키보드 focus는 선택 상태와 다른 표시여야 합니다.");
 assert.match(css, /\.bottom-nav-item>\.badge\{[^}]*left:calc\(50% \+ 13px\)/su, "badge는 icon pill과 겹치지 않게 배치해야 합니다.");
 assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.bottom-nav-item\{color:#aaa095\}[\s\S]*\.bottom-nav-item\.active::before\{background:#a68bd3\}[\s\S]*\.bottom-nav-item\.active \.bottom-nav-icon\{background:#40354f;color:#ddcef5\}/u, "dark mode의 active·inactive 아이콘 대비 계약이 필요합니다.");
-assert.match(css, /\.manage-segments button\{[^}]*color:#62594f/su, "비선택 세부 탭은 밝은 배경에서 4.5:1 이상 대비여야 합니다.");
-assert.match(css, /\.manage-segments button:hover\{[^}]*background:#f4edfa[^}]*color:var\(--accent\)/su, "세부 탭에는 hover 피드백이 있어야 합니다.");
+assert.match(css, /\.manage-segments\{[^}]*display:inline-flex[^}]*width:max-content[^}]*max-width:100%[^}]*gap:2px[^}]*margin-bottom:7px/su, "세부 탭은 왼쪽 정렬 content-width 캡슐이어야 합니다.");
+assert.match(css, /\.manage-segments button\{[^}]*flex:0 0 70px[^}]*width:70px[^}]*min-height:44px[^}]*gap:4px[^}]*color:#62594f/su, "작은 세부 탭도 고정 폭·44px hit target·밝은 테마 대비를 유지해야 합니다.");
+assert.match(css, /\.manage-segments button:last-child\{flex-basis:78px;width:78px/su, "모임 탭은 초대 수와 무관하게 고정 폭이어야 합니다.");
+assert.match(css, /\.manage-segments \.badge\{position:absolute;top:3px;right:3px/su, "초대 badge는 탭 폭을 늘리지 않게 배치해야 합니다.");
+assert.match(css, /\.manage-segment-icon svg\{[^}]*width:16px[^}]*stroke-width:1\.8/su, "세부 탭 아이콘은 compact 크기여야 합니다.");
+assert.match(css, /button\[aria-selected="true"\] \.manage-segment-icon svg\{stroke-width:2\.4\}/u, "선택된 탭 아이콘은 더 굵어야 합니다.");
+assert.match(css, /button\[aria-selected="true"\]\{background:#fffdf8;color:#342f2a;font-weight:800/su, "선택 탭은 채워진 배경과 굵은 글자로 구별해야 합니다.");
+assert.match(css, /\.manage-segments button:hover\{[^}]*background:#f4edfa[^}]*color:#7357a5/su, "세부 탭에는 hover 피드백이 있어야 합니다.");
 assert.match(css, /\.view\{overflow-x:hidden\}/u, "380px에서 가로 overflow가 없어야 합니다.");
 assert.match(css, /\.composer-bar\{[^}]*grid-template-columns:44px minmax\(0,1fr\) 44px 44px/su, "380px compact composer가 가로로 넘치면 안 됩니다.");
 assert.match(css, /overscroll-behavior:contain/u, "상세 timeline은 palette 밖으로 스크롤을 전파하면 안 됩니다.");
@@ -116,6 +130,9 @@ assert.match(css, /\.header-actions\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "
 assert.match(css, /\.icon-button\s*\{[^}]*-webkit-app-region:\s*no-drag/su, "개별 헤더 버튼도 이동 영역에서 제외해야 합니다.");
 assert.match(css, /\.app\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/su, "좁은 창에서도 목록과 배지가 가로로 잘리지 않아야 합니다.");
 assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.management-icon-action:hover,\.manage-row:hover\{background:#40354f;color:var\(--ink\)\}\.manage-avatar\{background:#40354f;color:var\(--ink\)\}\}/u, "dark mode 관리 아이콘은 4.5:1 이상 대비 색을 사용해야 합니다.");
+assert.match(css, /\.friend-code-card code\{[^}]*width:8ch[^}]*user-select:all[^}]*font-size:24px[^}]*font-variant-numeric:tabular-nums/su, "친구 코드는 크고 고정폭이며 직접 선택할 수 있어야 합니다.");
+assert.match(css, /\.profile-actions button\{min-height:44px\}/u, "친구 프로필 action은 44px hit target이어야 합니다.");
+assert.match(css, /@media\(max-width:395px\)\{\.profile-dialog-summary[\s\S]*?\.profile-actions\{grid-template-columns:1fr\}\}/u, "친구 프로필 action은 380px에서 한 열로 배치되어야 합니다.");
 
 const ui = await readFile(resolve(root, "ui/friend-messages-ui.js"), "utf8");
 assert.doesNotMatch(ui, /\bfetch\s*\(/u, "네트워크 요청은 main-side에서만 해야 합니다.");
@@ -152,10 +169,16 @@ assert.match(ui, /pendingDialogOperation\?\.operationId === message\.operationId
 assert.doesNotMatch(ui, /for \(const \[accept, label\][\s\S]*respondGroupInvite/u, "받은 초대 목록에 inline 수락·거절 버튼을 만들면 안 됩니다.");
 assert.match(ui, /kind: "invite-response", operationId/u, "초대 응답은 operationId pending lock을 사용해야 합니다.");
 assert.match(ui, /let manageRecords = new Map\(\)/u, "관리 목록 polling은 keyed DOM record를 재사용해야 합니다.");
+assert.match(ui, /group-invite-count"\]\.textContent = inviteRows\.length > 9 \? "9\+" : String\(inviteRows\.length\)/u, "세부 탭 badge는 큰 초대 수를 9+로 요약해야 합니다.");
 assert.match(ui, /function showManageSection\(name, focusTab = false\)/u, "친구·모임 panel 전환을 명시적으로 관리해야 합니다.");
 assert.match(ui, /event\.key === "Home" \? sections\[0\] : event\.key === "End" \? sections\.at\(-1\)/u, "Home과 End는 첫·마지막 세부 탭으로 이동해야 합니다.");
 assert.match(ui, /event\.key === "ArrowLeft" \? sections\[\(currentIndex - 1 \+ sections\.length\) % sections\.length\][\s\S]*event\.key === "ArrowRight" \? sections\[\(currentIndex \+ 1\) % sections\.length\]/u, "좌우 방향키는 현재 탭 기준으로 순환해야 합니다.");
-assert.match(ui, /elements\["profile-row"\]\.onclick = \(\) => openManageDialog\("profile"/u, "프로필 행은 프로필 편집 dialog를 직접 열어야 합니다.");
+assert.match(ui, /elements\["profile-row"\]\.onclick = \(\) => openManageDialog\("profile"/u, "프로필 행은 프로필 조회 dialog를 직접 열어야 합니다.");
+assert.match(ui, /globalThis\.navigator\?\.clipboard\?\.writeText/u, "친구 코드 복사는 Clipboard API를 우선 사용해야 합니다.");
+assert.match(ui, /document\.execCommand\?\.\("copy"\) === true/u, "Clipboard API 실패 시 직접 복사 fallback이 필요합니다.");
+assert.match(ui, /복사하지 못했어요\. 코드를 길게 눌러 직접 복사해 주세요/u, "복사 실패 시 사용자가 취할 다음 단계를 안내해야 합니다.");
+assert.match(ui, /profileEditing = false; renderManageDialog\(false\); elements\["profile-edit"\]\.focus/u, "프로필 저장 성공은 조회 화면과 수정 action focus로 돌아가야 합니다.");
+assert.match(ui, /friendAliasEditing = false; renderManageDialog\(false\); elements\["friend-alias-edit"\]\.focus/u, "친구 별칭 저장 성공은 조회 화면과 이름 바꾸기 focus로 돌아가야 합니다.");
 assert.match(ui, /const inviteRows = model\.groupInvites\.map[\s\S]*placeRows\(elements\["group-list"\], \[\.\.\.inviteRows, \.\.\.groupRows\]\)/u, "받은 초대는 모임 목록 행에 합쳐야 합니다.");
 assert.match(entry, /sentTo: `\$\{targetType\}:\$\{targetId\}`, \.\.\.operationMeta/u, "send 성공은 operationId를 palette에 되돌려줘야 합니다.");
 assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.composer-icon\.selected,\.thread-avatar\{background:#40354f;color:var\(--ink\)\}/u, "dark mode 아이콘은 4.5:1 이상 대비 색을 사용해야 합니다.");
