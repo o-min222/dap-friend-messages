@@ -4,12 +4,14 @@ const CONNECTION_ID = "google";
 const OAUTH_SCOPES = Object.freeze(["openid"]);
 const POLL_INTERVAL_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 8_000;
+const SEEN_MESSAGE_ID_FLOOR = 2_048;
 const MESSAGE_MAX_LENGTH = 100;
 const DISPLAY_NAME_MAX_LENGTH = 20;
 const NAME_FORBIDDEN_PATTERN = /[\p{Cc}\p{Cf}]/u;
 const GROUP_MAX_MEMBERS = 8;
 const FRIEND_CODE_PATTERN = /^[A-F0-9]{6}$/u;
 const STICKER_IDS = Object.freeze(["smile", "cheer", "love", "surprise", "sulk", "cry", "celebrate", "tired"]);
+const NEW_MESSAGE_NOTICE = "새 쪽지가 도착했어요.";
 // Edge 계약이 확정되면 값만 바꾸면 되도록 wire action을 한곳에 모은다.
 const BACKEND_ACTIONS = Object.freeze({
   state: "state", connectFriend: "connect", updateFriendAlias: "updateFriendAlias",
@@ -138,13 +140,16 @@ function normalizeMetadata(raw) {
   const id = String(raw.message_id || raw.id || "");
   if (!id) return null;
   const anonymous = raw.anonymous === true || raw.is_anonymous === true;
+  const targetType = raw.target_type === "group" || raw.group_id ? "group" : "friend";
   return {
     id,
     anonymous,
     senderId: anonymous ? "" : String(raw.sender_id || ""),
     senderName: anonymous ? "익명의 친구" : String(raw.sender_name || raw.display_name || "친구").slice(0, 40),
-    targetType: raw.target_type === "group" || raw.group_id ? "group" : "friend",
-    targetId: String(raw.target_id || raw.group_id || (anonymous ? "" : raw.sender_id) || ""),
+    targetType,
+    targetId: anonymous
+      ? targetType === "group" ? String(raw.group_id || raw.target_id || "") : ""
+      : String(raw.target_id || raw.group_id || raw.sender_id || ""),
     targetName: String(raw.target_name || raw.group_name || "").slice(0, 40),
     stickerId: STICKER_IDS.includes(raw.sticker_id) ? raw.sticker_id : null,
     createdAt: String(raw.created_at || new Date().toISOString()),
@@ -258,6 +263,8 @@ export function activate(ctx) {
   let pollTimer = null;
   let syncPromise = null;
   let opaqueSession = null;
+  let trayHandle = null;
+  let seenMessageIds = null;
   const expiryTimers = new Map();
   const registrations = [];
   const state = {
@@ -283,6 +290,28 @@ export function activate(ctx) {
     maxMessageLength: MESSAGE_MAX_LENGTH,
   });
   const pushState = (extra = {}) => post({ type: "state", state: publicState(), ...extra });
+  const unreadCount = () => state.messages.filter((message) => !message.openedAt).length;
+  const paletteIsOpen = () => Boolean(palette && (typeof palette.isDestroyed !== "function" || !palette.isDestroyed()));
+  const trayPatch = () => {
+    const count = unreadCount();
+    return {
+      submenu: [
+        { itemId: "unread", label: count ? `● 새 쪽지 ${count}개` : "새 쪽지 없음", enabled: false },
+        { itemId: "separator", type: "separator" },
+        { itemId: "open", label: "친구 쪽지 열기…", actionId: "openPalette", enabled: true },
+      ],
+    };
+  };
+  const updateTray = () => trayHandle?.update?.(trayPatch());
+  const announceNewMessages = (count) => {
+    if (!count || paletteIsOpen() || typeof ctx.host.bubble?.speak !== "function") return;
+    try {
+      const result = ctx.host.bubble.speak(NEW_MESSAGE_NOTICE);
+      result?.catch?.(() => {});
+    } catch {
+      // Host 알림 실패가 polling을 막지 않게 한다.
+    }
+  };
 
   const edgeFetch = async (authorization, body) => {
     const response = await fetch(EDGE_URL, {
@@ -337,11 +366,28 @@ export function activate(ctx) {
 
   const applyServerState = (payload) => {
     const next = mergeServerState(state.messages, payload);
+    const incomingIds = next.messages.filter((message) => !message.openedAt).map((message) => message.id);
+    let newCount = 0;
+    if (seenMessageIds === null) {
+      seenMessageIds = new Set(incomingIds);
+    } else {
+      for (const id of incomingIds) {
+        if (!seenMessageIds.has(id)) newCount += 1;
+        // Set의 삽입 순서를 최근 확인 순서로 사용한다.
+        seenMessageIds.delete(id);
+        seenMessageIds.add(id);
+      }
+      // 일시적으로 응답에서 빠진 ID도 기억해 재알림을 막되, 세션 메모리는 bounded한다.
+      const limit = Math.max(SEEN_MESSAGE_ID_FLOOR, incomingIds.length);
+      while (seenMessageIds.size > limit) seenMessageIds.delete(seenMessageIds.values().next().value);
+    }
     state.me = next.me;
     state.friends = next.friends;
     state.groups = next.groups;
     state.groupInvites = next.groupInvites;
     state.messages = next.messages;
+    updateTray();
+    announceNewMessages(newCount);
   };
 
   const syncState = ({ announce = false } = {}) => {
@@ -400,6 +446,7 @@ export function activate(ctx) {
       if (!status.connected) throw new Error(status.reason || "Google 계정을 연결하지 못했어요.");
       state.connection = "connected";
       opaqueSession = null;
+      seenMessageIds = null;
       startPolling();
       await syncState();
       pushState({ notice: "Google 계정을 연결했어요." });
@@ -420,6 +467,7 @@ export function activate(ctx) {
     const timer = setTimeout(() => {
       expiryTimers.delete(messageId);
       state.messages = state.messages.filter((message) => message.id !== messageId);
+      updateTray();
       pushState({ expiredMessageId: messageId });
     }, delay);
     timer.unref?.();
@@ -484,6 +532,7 @@ export function activate(ctx) {
         if (index < 0 || state.messages[index].openedAt) return;
         const opened = normalizeOpenedMessage(await request(BACKEND_ACTIONS.openMessage, { messageId }), state.messages[index]);
         state.messages[index] = opened;
+        updateTray();
         pushState({ openedMessageId: messageId });
         expireMessageAt(messageId, opened.expiresAt);
       } else if (["removeFriend", "blockFriend", "unblockFriend"].includes(message.type)) {
@@ -562,6 +611,16 @@ export function activate(ctx) {
     priority: 44,
     icon: "assets/friend-messages.svg",
   }));
+  trayHandle = ctx.trayMenu?.addItem?.({
+    itemId: "friend-messages",
+    label: "친구 쪽지",
+    actionId: "openPalette",
+    showInContextMenu: true,
+    priority: 44,
+    submenu: trayPatch().submenu,
+  }) || null;
+  if (trayHandle) registrations.push(trayHandle);
+  updateTray();
 
   void checkConnection().catch((error) => {
     state.connection = "disconnected";
@@ -573,10 +632,12 @@ export function activate(ctx) {
     disposed = true;
     stopPolling();
     opaqueSession = null;
+    seenMessageIds = null;
     for (const timer of expiryTimers.values()) clearTimeout(timer);
     expiryTimers.clear();
     paletteOff?.();
     palette?.close();
+    trayHandle = null;
     for (const registration of registrations) registration?.dispose?.();
   };
 }
@@ -592,8 +653,10 @@ export const __test = {
   GROUP_MAX_MEMBERS,
   OAUTH_SCOPES,
   POLL_INTERVAL_MS,
+  SEEN_MESSAGE_ID_FLOOR,
   PUBLISHABLE_KEY,
   STICKER_IDS,
+  NEW_MESSAGE_NOTICE,
   expiryMillis,
   normalizeFriend,
   normalizeGroup,

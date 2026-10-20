@@ -10,6 +10,7 @@ test("polling interval은 한 곳에서만 만들고 재시작 전에 기존 tim
   const source = await readFile(new URL("../dap_friend_messages/plugin.mjs", import.meta.url), "utf8");
   assert.equal(source.match(/\bsetInterval\s*\(/gu)?.length, 1);
   assert.match(source, /const startPolling = \(\) => \{\s*stopPolling\(\);[\s\S]*pollTimer = setInterval/u);
+  assert.match(source, /while \(seenMessageIds\.size > limit\)/u, "알림 ID 집합은 capped recent-ID cache여야 한다");
 });
 
 test("최종 Edge endpoint와 공개 키, action allowlist를 고정한다", () => {
@@ -19,6 +20,7 @@ test("최종 Edge endpoint와 공개 키, action allowlist를 고정한다", () 
   assert.deepEqual([...__test.STICKER_IDS], ["smile", "cheer", "love", "surprise", "sulk", "cry", "celebrate", "tired"]);
   assert.deepEqual([...__test.OAUTH_SCOPES], ["openid"]);
   assert.ok(__test.POLL_INTERVAL_MS >= 5_000 && __test.POLL_INTERVAL_MS <= 15_000);
+  assert.equal(__test.SEEN_MESSAGE_ID_FLOOR, 2_048);
 });
 
 test("친구 코드는 A-F/숫자 6자리, 쪽지는 100자로 제한한다", () => {
@@ -78,14 +80,15 @@ test("익명 쪽지는 backend 발신자 필드가 있어도 main 정규화에�
     profile: { friend_code: "ABC123" },
     unopened_messages: [{
       message_id: "m-anon", anonymous: true, sender_id: "secret-user-id",
-      sender_name: "실명", display_name: "노출 금지", created_at: "2026-10-20T10:00:00Z",
+      sender_name: "실명", display_name: "노출 금지", target_id: "friend-must-not-leak",
+      created_at: "2026-10-20T10:00:00Z",
     }],
   });
   assert.equal(result.messages[0].anonymous, true);
   assert.equal(result.messages[0].senderId, "");
   assert.equal(result.messages[0].senderName, "익명의 친구");
   assert.equal(result.messages[0].targetId, "");
-  assert.doesNotMatch(JSON.stringify(result.messages[0]), /secret-user-id|실명|노출 금지/u);
+  assert.doesNotMatch(JSON.stringify(result.messages[0]), /secret-user-id|실명|노출 금지|friend-must-not-leak/u);
   const opened = __test.normalizeOpenedMessage({
     anonymous: true, sender_id: "open-secret-id", sender_name: "열 때 노출 금지",
     body: "안녕", expires_at: Date.now() + 5_000,
@@ -94,6 +97,17 @@ test("익명 쪽지는 backend 발신자 필드가 있어도 main 정규화에�
   assert.equal(opened.senderId, "");
   assert.equal(opened.senderName, "익명의 친구");
   assert.doesNotMatch(JSON.stringify(opened), /open-secret-id|열 때 노출 금지|fallback-id|기존 이름/u);
+});
+
+test("익명 모임 쪽지는 발신자는 마스킹하되 groupId만 보존한다", () => {
+  const message = __test.normalizeMetadata({
+    message_id: "m-group-anon", anonymous: true, sender_id: "secret-user",
+    target_type: "group", target_id: "g-fallback", group_id: "g1", group_name: "산책",
+  });
+  assert.equal(message.senderId, "");
+  assert.equal(message.senderName, "익명의 친구");
+  assert.equal(message.targetType, "group");
+  assert.equal(message.targetId, "g1");
 });
 
 test("모임과 pending 초대를 최대 8명 계약으로 정규화한다", () => {
@@ -152,6 +166,9 @@ function pluginHarness({ connected = false, fetchImpl, statusImpl }) {
   const actions = [];
   const radial = [];
   const posted = [];
+  const trayItems = [];
+  const trayUpdates = [];
+  const bubbleMessages = [];
   const oauthCalls = { connect: [], accessToken: 0, status: 0 };
   let paletteHandler;
   let closed = false;
@@ -159,7 +176,14 @@ function pluginHarness({ connected = false, fetchImpl, statusImpl }) {
   const ctx = {
     actions: { registerAction(spec) { actions.push(spec); return registration(); } },
     radialMenu: { addItem(spec) { radial.push(spec); return registration(); } },
+    trayMenu: {
+      addItem(spec) {
+        trayItems.push(spec);
+        return { update(patch) { trayUpdates.push(patch); }, dispose() {} };
+      },
+    },
     host: {
+      bubble: { speak(message) { bubbleMessages.push(message); } },
       oauth: {
         async status(id) {
           oauthCalls.status += 1;
@@ -185,7 +209,7 @@ function pluginHarness({ connected = false, fetchImpl, statusImpl }) {
   globalThis.fetch = fetchImpl;
   const cleanupPlugin = activate(ctx);
   return {
-    actions, radial, posted, oauthCalls,
+    actions, radial, posted, oauthCalls, trayItems, trayUpdates, bubbleMessages,
     get handler() { return paletteHandler; },
     dispose() { cleanupPlugin(); },
     async cleanup() { cleanupPlugin(); globalThis.fetch = originalFetch; await wait(); },
@@ -222,6 +246,70 @@ test("종료 뒤 늦게 끝난 OAuth 상태 확인은 네트워크나 폴링을 
     resolveStatus({ connected: true });
     await wait(10);
     assert.equal(fetchCalls, 0);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("첫 state는 알림 기준선으로 삼고 이후 새 ID만 내용 없이 bubble/tray에 알린다", async () => {
+  let stateCall = 0;
+  const statePayloads = [
+    [{ message_id: "old", sender_id: "f1", sender_name: "과거 이름" }],
+    [],
+    [{ message_id: "old", sender_id: "f1", sender_name: "과거 이름" }],
+    [
+      { message_id: "old", sender_id: "f1", sender_name: "과거 이름" },
+      { message_id: "new", anonymous: true, sender_id: "secret", sender_name: "숨길 이름", target_id: "f1" },
+    ],
+    [
+      { message_id: "old", sender_id: "f1" },
+      { message_id: "new", anonymous: true, sender_id: "secret", target_id: "f1" },
+    ],
+    [
+      { message_id: "old", sender_id: "f1" },
+      { message_id: "new", anonymous: true, sender_id: "secret", target_id: "f1" },
+      { message_id: "while-open", sender_id: "f2", sender_name: "열린 창" },
+    ],
+  ];
+  const harness = pluginHarness({
+    connected: true,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      if (body.action === "session") return { ok: true, status: 200, async text() { return JSON.stringify({ session_token: "opaque", expires_at: Date.now() + 60_000 }); } };
+      if (body.action === "state") {
+        const unopened_messages = statePayloads[Math.min(stateCall, statePayloads.length - 1)];
+        stateCall += 1;
+        return { ok: true, status: 200, async text() { return JSON.stringify({ profile: { friend_code: "ABC123" }, unopened_messages }); } };
+      }
+      throw new Error(`unexpected ${body.action}`);
+    },
+  });
+  try {
+    await wait(20);
+    assert.equal(harness.bubbleMessages.length, 0, "기존 쪽지 baseline은 알리지 않는다");
+    assert.equal(harness.trayUpdates.at(-1).submenu[0].label, "● 새 쪽지 1개");
+
+    await harness.actions.find((action) => action.id === "refreshInbox").callback();
+    assert.equal(harness.bubbleMessages.length, 0);
+    assert.equal(harness.trayUpdates.at(-1).submenu[0].label, "새 쪽지 없음");
+
+    await harness.actions.find((action) => action.id === "refreshInbox").callback();
+    assert.equal(harness.bubbleMessages.length, 0, "응답에서 빠졌다 돌아온 같은 ID는 다시 알리지 않는다");
+    assert.equal(harness.trayUpdates.at(-1).submenu[0].label, "● 새 쪽지 1개");
+
+    await harness.actions.find((action) => action.id === "refreshInbox").callback();
+    assert.deepEqual(harness.bubbleMessages, [__test.NEW_MESSAGE_NOTICE]);
+    assert.equal(harness.bubbleMessages[0], "새 쪽지가 도착했어요.");
+    assert.doesNotMatch(harness.bubbleMessages[0], /과거 이름|숨길 이름|secret|2/u);
+    assert.equal(harness.trayUpdates.at(-1).submenu[0].label, "● 새 쪽지 2개");
+
+    await harness.actions.find((action) => action.id === "refreshInbox").callback();
+    assert.equal(harness.bubbleMessages.length, 1, "같은 ID를 중복 알리지 않는다");
+
+    harness.actions.find((action) => action.id === "openPalette").callback();
+    await harness.actions.find((action) => action.id === "refreshInbox").callback();
+    assert.equal(harness.bubbleMessages.length, 1, "palette가 열려 있으면 bubble을 겹쳐 띄우지 않는다");
+    assert.equal(harness.trayUpdates.at(-1).submenu[0].label, "● 새 쪽지 3개");
   } finally {
     await harness.cleanup();
   }
