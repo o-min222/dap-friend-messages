@@ -22,27 +22,31 @@
 
       <div id="workspace" class="workspace" hidden>
         <nav class="tabs" aria-label="쪽지 메뉴">
-          <button id="tab-inbox" class="tab active" type="button">받은 쪽지 <span id="nav-unread" class="badge">0</span></button>
-          <button id="tab-compose" class="tab" type="button">쪽지 쓰기</button>
-          <button id="tab-friends" class="tab" type="button">친구</button>
-          <button id="tab-groups" class="tab" type="button">모임 <span id="invite-count" class="badge">0</span></button>
+          <button id="tab-home" class="tab active" type="button" aria-controls="view-home">쪽지 <span id="nav-unread" class="badge">0</span></button>
+          <button id="tab-friends" class="tab" type="button" aria-controls="view-friends">친구 관리</button>
+          <button id="tab-groups" class="tab" type="button" aria-controls="view-groups">모임 관리 <span id="invite-count" class="badge">0</span></button>
         </nav>
 
-        <section id="view-inbox" class="view" aria-labelledby="inbox-title">
-          <div class="view-heading"><div><p class="eyebrow">PAPER NOTES</p><h2 id="inbox-title">도착한 쪽지</h2></div><span class="muted">열면 약 5초 뒤 사라져요</span></div>
-          <div id="message-stack" class="message-stack" aria-live="polite"></div>
-          <div id="inbox-empty" class="empty"><span aria-hidden="true">📭</span><strong>아직 온 쪽지가 없어요</strong><p>새 쪽지가 오면 접힌 봉투로 나타나요.</p></div>
+        <section id="view-home" class="view" aria-labelledby="home-title">
+          <div class="view-heading"><div><p class="eyebrow">PAPER CONTACTS</p><h2 id="home-title">누구에게 쪽지를 보낼까요?</h2></div><span class="muted">친구나 모임을 눌러요</span></div>
+          <section id="anonymous-thread-section" class="thread-section" hidden aria-labelledby="anonymous-threads-title"><h3 id="anonymous-threads-title">익명 쪽지</h3><ul id="anonymous-thread-list" class="thread-list"></ul></section>
+          <section class="thread-section" aria-labelledby="friend-threads-title"><h3 id="friend-threads-title">친구</h3><ul id="friend-thread-list" class="thread-list"></ul></section>
+          <section class="thread-section" aria-labelledby="group-threads-title"><h3 id="group-threads-title">모임</h3><ul id="group-thread-list" class="thread-list"></ul></section>
+          <div id="contact-empty" class="empty"><span aria-hidden="true">📭</span><strong>연결된 친구나 모임이 없어요</strong><p>관리 화면에서 친구를 연결하거나 모임을 만들어 보세요.</p></div>
         </section>
 
-        <section id="view-compose" class="view" hidden aria-labelledby="compose-title">
-          <div class="view-heading"><div><p class="eyebrow">NEW NOTE</p><h2 id="compose-title">쪽지 쓰기</h2></div><span id="counter" class="muted">0 / 100</span></div>
-          <form id="message-form" class="paper-form">
-            <div class="target-row"><label>받는 곳<select id="target-type"><option value="friend">친구 1명</option><option value="group">모임 전체</option></select></label><label>대상<select id="target-select" required></select></label></div>
+        <section id="view-detail" class="view detail-view" hidden aria-labelledby="detail-name">
+          <div class="detail-header"><button id="detail-back" class="back-button" type="button" aria-label="친구와 모임 목록으로 돌아가기">← 목록</button><div><p id="detail-kind" class="eyebrow">FRIEND NOTE</p><h2 id="detail-name" tabindex="-1">쪽지</h2></div><span id="detail-unread" class="badge">0</span></div>
+          <p class="muted detail-help">받은 쪽지를 열면 약 5초 뒤 사라져요.</p>
+          <div id="message-stack" class="message-stack" aria-live="polite"></div>
+          <div id="inbox-empty" class="empty compact"><span aria-hidden="true">✉️</span><strong>이곳에 온 쪽지가 없어요</strong></div>
+          <form id="message-form" class="paper-form detail-composer">
+            <div class="composer-heading"><strong>새 종이 쪽지</strong><span id="counter" class="muted">0 / 100</span></div>
             <fieldset class="stickers"><legend>내장 스티커 <span>(선택)</span></legend><div id="sticker-grid" class="sticker-grid"></div></fieldset>
             <label class="paper"><span class="sr-only">쪽지 내용</span><textarea id="message-body" rows="4" placeholder="100자 안으로 마음을 적어 보세요"></textarea></label>
             <label class="anonymous-option" for="anonymous-toggle"><input id="anonymous-toggle" type="checkbox"><span><strong>익명으로 보내기</strong><small>받는 사람에게만 익명이며, 운영상 발신자 정보는 서버에 보관됩니다.</small></span></label>
             <button id="send" class="primary-button" type="submit">쪽지 접어 보내기</button>
-            <p class="form-hint">모임 쪽지는 모임원 모두에게 전달되며, 한 명이라도 친구·차단 조건을 충족하지 않으면 아무에게도 전송되지 않아요.</p>
+            <p id="composer-hint" class="form-hint">모임 쪽지는 한 명이라도 친구·차단 조건을 충족하지 않으면 아무에게도 전송되지 않아요.</p>
           </form>
         </section>
 
