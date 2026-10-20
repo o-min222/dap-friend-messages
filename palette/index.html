@@ -40,6 +40,7 @@
             <div class="target-row"><label>받는 곳<select id="target-type"><option value="friend">친구 1명</option><option value="group">모임 전체</option></select></label><label>대상<select id="target-select" required></select></label></div>
             <fieldset class="stickers"><legend>내장 스티커 <span>(선택)</span></legend><div id="sticker-grid" class="sticker-grid"></div></fieldset>
             <label class="paper"><span class="sr-only">쪽지 내용</span><textarea id="message-body" rows="4" placeholder="100자 안으로 마음을 적어 보세요"></textarea></label>
+            <label class="anonymous-option" for="anonymous-toggle"><input id="anonymous-toggle" type="checkbox"><span><strong>익명으로 보내기</strong><small>받는 사람에게만 익명이며, 운영상 발신자 정보는 서버에 보관됩니다.</small></span></label>
             <button id="send" class="primary-button" type="submit">쪽지 접어 보내기</button>
             <p class="form-hint">모임 쪽지는 모임원 모두에게 전달되며, 한 명이라도 친구·차단 조건을 충족하지 않으면 아무에게도 전송되지 않아요.</p>
           </form>
@@ -59,7 +60,7 @@
         </section>
       </div>
 
-      <footer><p id="status" class="status" role="status" aria-live="polite"></p><p class="privacy">TLS·저장 암호화 · E2EE 아님 · 본문 텔레메트리 미기록</p></footer>
+      <footer><p id="status" class="status" role="status" aria-live="polite"></p><p class="privacy">TLS·저장 암호화 · E2EE 아님 · 익명 발신자 정보 서버 보관 · 본문 텔레메트리 미기록</p></footer>
     </main>
     <script src="../ui/friend-messages-ui.js"></script>
   </body>

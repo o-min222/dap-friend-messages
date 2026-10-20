@@ -7,6 +7,7 @@
 - 사용자가 버튼을 누를 때만 Google 연결
 - A–F와 숫자로 된 6자리 친구 코드, 친구 차단·삭제
 - 친구 1명 또는 모임 전체에 쪽지 전송
+- 친구 또는 모임에 보낼 때 받는 사람에게 발신자를 숨기는 익명 전송
 - 본문 또는 내장 스티커 중 하나 이상, 본문 최대 100자
 - 고정 sticker ID: `smile`, `cheer`, `love`, `surprise`, `sulk`, `cry`, `celebrate`, `tired`
 - 업로드 없는 앱 내장 preset만 제공
@@ -23,7 +24,7 @@ wire action 이름은 `dap_friend_messages/plugin.mjs`의 `BACKEND_ACTIONS` 한�
 | --- | --- |
 | `state` | 없음 |
 | `connect` | `friendCode` |
-| `sendMessage` | `targetType`, `targetId`, `body`, `stickerId`, `clientNonce` |
+| `sendMessage` | `targetType`, `targetId`, `body`, `stickerId`, `anonymous`, `clientNonce` |
 | `open` | `messageId` |
 | `remove` / `block` / `unblock` | `friendId` |
 | `createGroup` | `name`, `memberIds` |
@@ -41,6 +42,7 @@ Endpoint: `https://vowrjkctldqxizvleogd.supabase.co/functions/v1/friend-messages
 - Edge opaque session은 플러그인 메모리에만 유지하고 palette에는 전달하지 않습니다.
 - 모든 네트워크 요청은 main-side에서만 수행합니다.
 - 전송은 TLS, 서버 데이터는 저장 암호화를 사용하지만 종단간 암호화(E2EE)는 아닙니다.
+- 익명 전송은 받는 사람에게만 익명이며, 운영과 악용 대응을 위해 발신자 정보는 서버에 보관됩니다.
 - 쪽지 본문은 로그·분석·오류 보고 텔레메트리에 기록하지 않습니다.
 - publishable key만 사용하고 `service_role` 또는 secret key를 사용하지 않습니다.
 

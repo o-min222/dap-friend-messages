@@ -41,10 +41,33 @@ test("state의 열지 않은 쪽지는 메타데이터만 정규화하고 본문
   assert.equal(result.me.code, "AB12CD");
   assert.equal(result.friends[0].id, "f1");
   assert.deepEqual(result.messages[0], {
-    id: "m1", senderId: "f1", senderName: "하늘", createdAt: "2026-10-20T10:00:00Z",
+    id: "m1", anonymous: false, senderId: "f1", senderName: "하늘", createdAt: "2026-10-20T10:00:00Z",
     targetType: "friend", targetId: "f1", targetName: "", stickerId: null,
     openedAt: null, expiresAt: null, body: null,
   });
+});
+
+test("익명 쪽지는 backend 발신자 필드가 있어도 main 정규화에서 마스킹한다", () => {
+  const result = __test.normalizeState({
+    profile: { friend_code: "ABC123" },
+    unopened_messages: [{
+      message_id: "m-anon", anonymous: true, sender_id: "secret-user-id",
+      sender_name: "실명", display_name: "노출 금지", created_at: "2026-10-20T10:00:00Z",
+    }],
+  });
+  assert.equal(result.messages[0].anonymous, true);
+  assert.equal(result.messages[0].senderId, "");
+  assert.equal(result.messages[0].senderName, "익명의 친구");
+  assert.equal(result.messages[0].targetId, "");
+  assert.doesNotMatch(JSON.stringify(result.messages[0]), /secret-user-id|실명|노출 금지/u);
+  const opened = __test.normalizeOpenedMessage({
+    anonymous: true, sender_id: "open-secret-id", sender_name: "열 때 노출 금지",
+    body: "안녕", expires_at: Date.now() + 5_000,
+  }, { id: "m-anon", anonymous: false, senderId: "fallback-id", senderName: "기존 이름" });
+  assert.equal(opened.anonymous, true);
+  assert.equal(opened.senderId, "");
+  assert.equal(opened.senderName, "익명의 친구");
+  assert.doesNotMatch(JSON.stringify(opened), /open-secret-id|열 때 노출 금지|fallback-id|기존 이름/u);
 });
 
 test("모임과 pending 초대를 최대 8명 계약으로 정규화한다", () => {
@@ -236,7 +259,7 @@ test("401이면 Google 토큰으로 opaque 세션을 한 번만 다시 교환한
   }
 });
 
-test("모임 쪽지는 targetType/targetId/stickerId adapter 계약으로 전송한다", async () => {
+test("모임 쪽지는 targetType/targetId/stickerId/anonymous adapter 계약으로 전송한다", async () => {
   const requests = [];
   const harness = pluginHarness({
     connected: true,
@@ -252,13 +275,14 @@ test("모임 쪽지는 targetType/targetId/stickerId adapter 계약으로 전송
   try {
     await wait(10);
     await harness.actions.find((action) => action.id === "openPalette").callback();
-    harness.handler({ type: "sendMessage", targetType: "group", targetId: "g1", body: "", stickerId: "celebrate" });
+    harness.handler({ type: "sendMessage", targetType: "group", targetId: "g1", body: "", stickerId: "celebrate", anonymous: true });
     await wait(10);
     const sent = requests.find((body) => body.action === "sendMessage");
     assert.equal(sent.targetType, "group");
     assert.equal(sent.targetId, "g1");
     assert.equal(sent.body, "");
     assert.equal(sent.stickerId, "celebrate");
+    assert.equal(sent.anonymous, true);
     assert.equal(typeof sent.clientNonce, "string");
   } finally {
     await harness.cleanup();
