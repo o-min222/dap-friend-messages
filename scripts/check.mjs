@@ -21,7 +21,7 @@ for (const path of required) assert.ok((await stat(resolve(root, path))).isFile(
 const manifest = await readFile(resolve(root, "plugin.yaml"), "utf8");
 for (const line of [
   "id: dap.friend_messages",
-  "version: 0.10.0",
+  "version: 0.10.1",
   "entry: dap_friend_messages.plugin:activate",
   "min_app_version: 1.4.0",
   "  - window.palette",
@@ -29,7 +29,7 @@ for (const line of [
 ]) assert.ok(manifest.includes(line), `plugin.yaml에 '${line}'이 필요합니다.`);
 assert.doesNotMatch(manifest, /storage\.private/u, "메모리 세션만 사용하므로 storage.private 권한이 없어야 합니다.");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-assert.equal(packageJson.version, "0.10.0", "plugin.yaml과 package.json 버전이 같아야 합니다.");
+assert.equal(packageJson.version, "0.10.1", "plugin.yaml과 package.json 버전이 같아야 합니다.");
 
 const entry = await readFile(resolve(root, "dap_friend_messages/plugin.mjs"), "utf8");
 assert.doesNotMatch(entry, /^\s*import\s+.+from\s+["'][^./]/mu, "plugin.mjs에는 bare import를 사용할 수 없습니다.");
@@ -62,7 +62,10 @@ assert.doesNotMatch(html, /id="view-detail"|id="thread-list"|id="detail-back"/u,
 assert.match(html, /id="tab-manage"[^>]*aria-controls="view-manage"/u);
 assert.match(html, /id="view-manage"[^>]*aria-labelledby="manage-title"/u);
 assert.doesNotMatch(html, /<nav class="tabs"/u, "상단 탭 내비게이션이 남으면 안 됩니다.");
-assert.match(html, /<nav class="bottom-nav"[^>]*aria-label="주요 메뉴">[\s\S]*id="tab-home"[\s\S]*<span class="bottom-nav-label">쪽지<\/span>[\s\S]*id="tab-manage"[\s\S]*<span class="bottom-nav-label">친구<\/span>/u, "하단 내비게이션은 쪽지·친구 순서와 보이는 label을 가져야 합니다.");
+const bottomNav = html.match(/<nav class="bottom-nav"[\s\S]*?<\/nav>/u)?.[0] || "";
+assert.match(bottomNav, /id="tab-home"[^>]*aria-label="쪽지"[^>]*title="쪽지"[\s\S]*id="tab-manage"[^>]*aria-label="친구"[^>]*title="친구"/u, "아이콘 전용 하단 내비게이션은 쪽지·친구 접근성 이름과 title이 필요합니다.");
+assert.doesNotMatch(bottomNav, /bottom-nav-label|>\s*(?:쪽지|친구)\s*</u, "하단 내비게이션에 보이는 글자 label이 남으면 안 됩니다.");
+assert.match(bottomNav, /id="nav-unread" class="badge"[\s\S]*id="invite-count" class="badge"/u, "쪽지와 친구 아이콘에는 각각 badge가 있어야 합니다.");
 assert.match(html, /bottom-nav-icon" aria-hidden="true"><svg[^>]*focusable="false"/u, "하단 아이콘은 장식 요소로 숨겨야 합니다.");
 assert.match(html, /id="home-title" tabindex="-1">쪽지/u, "쪽지 목록 focus fallback 대상이 있어야 합니다.");
 assert.match(html, /id="message-list"[^>]*aria-live="polite"[^>]*aria-relevant="additions removals"[^>]*aria-atomic="false"/u, "쪽지 목록은 반복 전체 낭독을 줄이는 live-region 설정이어야 합니다.");
@@ -97,6 +100,12 @@ assert.match(css, /@media\(prefers-color-scheme:dark\)\{[^}]*--accent:#a68bd3[^}
 assert.match(css, /\.workspace\{grid-template-rows:minmax\(0,1fr\) auto\}/u, "하단 내비게이션은 workspace 흐름 안에서 콘텐츠 아래에 있어야 합니다.");
 assert.match(css, /\.bottom-nav\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)[^}]*safe-area-inset-bottom/su, "하단 내비게이션은 2열과 safe-area를 지원해야 합니다.");
 assert.match(css, /\.bottom-nav-item\{[^}]*min-height:52px/su, "하단 내비게이션 항목은 44px 이상이어야 합니다.");
+assert.match(css, /\.bottom-nav-icon\{[^}]*width:44px[^}]*height:36px[^}]*border-radius:18px/su, "아이콘에는 선택 배경을 위한 pill 영역이 있어야 합니다.");
+assert.match(css, /\.bottom-nav-item\.active::before\{background:#7357a5\}/u, "선택 항목은 색상 외 3px 표시선이 있어야 합니다.");
+assert.match(css, /\.bottom-nav-item\.active \.bottom-nav-icon\{background:#eee6f7;color:#563d82\}/u, "선택 아이콘은 밝은 테마에서 뚜렷한 pill과 그래픽 대비가 필요합니다.");
+assert.match(css, /\.bottom-nav-item:focus-visible\{outline:3px solid #b8514e/u, "키보드 focus는 선택 상태와 다른 표시여야 합니다.");
+assert.match(css, /\.bottom-nav-item>\.badge\{[^}]*left:calc\(50% \+ 13px\)/su, "badge는 icon pill과 겹치지 않게 배치해야 합니다.");
+assert.match(css, /@media\(prefers-color-scheme:dark\)\{\.bottom-nav-item\{color:#aaa095\}[\s\S]*\.bottom-nav-item\.active::before\{background:#a68bd3\}[\s\S]*\.bottom-nav-item\.active \.bottom-nav-icon\{background:#40354f;color:#ddcef5\}/u, "dark mode의 active·inactive 아이콘 대비 계약이 필요합니다.");
 assert.match(css, /\.manage-segments button\{[^}]*color:#62594f/su, "비선택 세부 탭은 밝은 배경에서 4.5:1 이상 대비여야 합니다.");
 assert.match(css, /\.manage-segments button:hover\{[^}]*background:#f4edfa[^}]*color:var\(--accent\)/su, "세부 탭에는 hover 피드백이 있어야 합니다.");
 assert.match(css, /\.view\{overflow-x:hidden\}/u, "380px에서 가로 overflow가 없어야 합니다.");

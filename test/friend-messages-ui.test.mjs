@@ -216,13 +216,15 @@ test("HTML은 하단 내비게이션·프로필 우선 친구 화면과 380px �
   const home = html.slice(html.indexOf('<section id="view-home"'), html.indexOf('<section id="view-manage"'));
   assert.doesNotMatch(home, /friend-list|group-list|message-form|textarea/u);
   const manageStart = html.indexOf('<section id="view-manage"'); const navStart = html.indexOf('<nav class="bottom-nav"'); const dialogStart = html.indexOf('<div id="manage-dialog-backdrop"'); const manage = html.slice(manageStart, navStart); const bottomNav = html.slice(navStart, dialogStart);
-  assert.ok(manageStart < navStart); assert.doesNotMatch(html, /<nav class="tabs"/u); assert.match(bottomNav, /id="tab-home"[\s\S]*bottom-nav-icon" aria-hidden="true"[\s\S]*<svg[\s\S]*bottom-nav-label">쪽지[\s\S]*id="tab-manage"[\s\S]*bottom-nav-label">친구/u);
+  assert.ok(manageStart < navStart); assert.doesNotMatch(html, /<nav class="tabs"/u); assert.match(bottomNav, /id="tab-home"[^>]*aria-label="쪽지"[^>]*title="쪽지"[\s\S]*bottom-nav-icon" aria-hidden="true"[\s\S]*<svg[^>]*focusable="false"[\s\S]*id="tab-manage"[^>]*aria-label="친구"[^>]*title="친구"[\s\S]*bottom-nav-icon" aria-hidden="true"[\s\S]*<svg[^>]*focusable="false"/u);
+  assert.doesNotMatch(bottomNav, /bottom-nav-label|>\s*(?:쪽지|친구)\s*</u, "아이콘 전용 nav에는 보이는 label text가 없어야 한다"); assert.match(bottomNav, /id="nav-unread" class="badge"[\s\S]*id="invite-count" class="badge"/u);
   assert.match(manage, /id="manage-title"[^>]*>친구<\/h2>[\s\S]*id="manage-menu-trigger"[^>]*aria-label="관리 메뉴"/u);
   assert.ok(manage.indexOf('id="profile-row"') < manage.indexOf('role="tablist"')); assert.match(manage, /id="profile-row"(?![^>]*aria-label)[\s\S]*내 프로필 · 눌러서 수정[\s\S]*id="my-code"/u);
   assert.match(manage, /role="tablist"[^>]*aria-label="친구와 모임"[\s\S]*id="manage-tab-friends"[^>]*role="tab"[^>]*aria-selected="true"[\s\S]*id="manage-tab-groups"[^>]*role="tab"[^>]*aria-selected="false"/u);
   assert.match(manage, /id="friends-panel"[^>]*role="tabpanel"[\s\S]*id="groups-panel"[^>]*role="tabpanel"[^>]*hidden/u); assert.doesNotMatch(manage, /friend-add-trigger|group-add-trigger|invite-section|invite-list|<(?:input|select|textarea|form)\b/u);
   assert.match(html, /id="menu-panel" hidden[\s\S]*id="menu-friend-add"[\s\S]*id="menu-group-add"/u); assert.doesNotMatch(html, /id="menu-profile"/u);
-  assert.match(css, /\.bottom-nav-item\{[^}]*min-height:52px/su); assert.match(css, /env\(safe-area-inset-bottom\)/u); assert.match(css, /\.composer-bar\{[^}]*grid-template-columns:44px minmax\(0,1fr\) 44px 44px/su); assert.match(css, /@media\(max-width:395px\)/u); assert.doesNotMatch(css, /transition:\s*all/u);
+  assert.match(css, /\.bottom-nav-item\{[^}]*min-height:52px/su); assert.match(css, /env\(safe-area-inset-bottom\)/u); assert.match(css, /\.bottom-nav-icon\{[^}]*width:44px[^}]*height:36px[^}]*border-radius:18px/su); assert.match(css, /\.bottom-nav-item\.active::before\{background:#7357a5\}/u); assert.match(css, /\.bottom-nav-item\.active \.bottom-nav-icon\{background:#eee6f7;color:#563d82\}/u); assert.match(css, /\.bottom-nav-item:focus-visible\{outline:3px solid #b8514e/u); assert.match(css, /\.bottom-nav-item>\.badge\{[^}]*left:calc\(50% \+ 13px\)/su); assert.match(css, /\.composer-bar\{[^}]*grid-template-columns:44px minmax\(0,1fr\) 44px 44px/su); assert.match(css, /@media\(max-width:395px\)/u); assert.doesNotMatch(css, /transition:\s*all/u);
+  for (const [foreground, background] of [["#7d746a", "#fffdf8"], ["#7357a5", "#f4edfa"], ["#563d82", "#eee6f7"], ["#563d82", "#e1d3ef"], ["#7357a5", "#fffdf8"], ["#aaa095", "#292724"], ["#ddcef5", "#40354f"], ["#ddcef5", "#4b3e5e"], ["#a68bd3", "#292724"], ["#b8514e", "#fffdf8"], ["#e17a76", "#292724"]]) assert.ok(contrastRatio(foreground, background) >= 3);
   assert.match(css, /\.manage-segments button\{[^}]*color:#62594f/su); assert.ok(contrastRatio("#62594f", "#e9e0d3") >= 4.5);
 });
 
@@ -234,6 +236,7 @@ test("dark primary button은 기본·disabled 상태 모두 읽기 쉬운 대비
 
 test("친구 화면은 친구 panel을 기본으로 열고 모임 tab에 초대 행과 badge를 표시한다", async () => {
   const view = await harness(); const next = state(); view.onMessage({ type: "state", state: next }); view.elements["tab-manage"].onclick();
+  assert.equal(view.elements["tab-home"].className, "bottom-nav-item"); assert.equal(view.elements["tab-home"].attributes["aria-current"], "false"); assert.equal(view.elements["tab-manage"].className, "bottom-nav-item active"); assert.equal(view.elements["tab-manage"].attributes["aria-current"], "page");
   assert.equal(view.elements["friends-panel"].hidden, false); assert.equal(view.elements["groups-panel"].hidden, true); assert.equal(view.elements["manage-tab-friends"].attributes["aria-selected"], "true");
   assert.equal(view.elements["profile-current-name"].textContent, "구름"); assert.equal(view.elements["my-code"].textContent, "A1B2C3"); assert.equal(view.elements["invite-count"].textContent, "1"); assert.equal(view.elements["group-invite-count"].textContent, "1");
   let prevented = 0;
